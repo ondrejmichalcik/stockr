@@ -1,0 +1,425 @@
+-- ============================================================================
+-- Stockr – Supabase schema (idempotentní, source of truth)
+-- Spusť celé v Supabase SQL Editoru. Lze spustit opakovaně bez errorů.
+-- Obsahuje: tables, indexes, triggers, RLS policies, RPC funkce, realtime
+-- publication, storage bucket.
+-- ============================================================================
+
+-- Extensions
+create extension if not exists "pgcrypto";
+
+-- ============================================================================
+-- TABLES
+-- ============================================================================
+
+-- users – mirror auth.users
+create table if not exists public.users (
+  id            uuid primary key references auth.users(id) on delete cascade,
+  email         text,
+  display_name  text,
+  avatar_url    text,
+  created_at    timestamptz not null default now()
+);
+
+-- warehouses
+create table if not exists public.warehouses (
+  id          uuid primary key default gen_random_uuid(),
+  owner_id    uuid not null references public.users(id) on delete cascade,
+  name        text not null,
+  created_at  timestamptz not null default now()
+);
+
+-- warehouse_members (join)
+create table if not exists public.warehouse_members (
+  warehouse_id uuid not null references public.warehouses(id) on delete cascade,
+  user_id      uuid not null references public.users(id) on delete cascade,
+  role         text not null check (role in ('owner', 'member')),
+  joined_at    timestamptz not null default now(),
+  primary key (warehouse_id, user_id)
+);
+
+create index if not exists idx_warehouse_members_user on public.warehouse_members(user_id);
+
+-- invitations
+create table if not exists public.invitations (
+  id            uuid primary key default gen_random_uuid(),
+  warehouse_id  uuid not null references public.warehouses(id) on delete cascade,
+  invited_by    uuid not null references public.users(id) on delete cascade,
+  email         text not null,
+  token         uuid not null unique default gen_random_uuid(),
+  role          text not null default 'member' check (role in ('member')),
+  expires_at    timestamptz not null default (now() + interval '7 days'),
+  accepted_at   timestamptz,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists idx_invitations_token on public.invitations(token);
+create index if not exists idx_invitations_warehouse on public.invitations(warehouse_id);
+
+-- boxes
+create table if not exists public.boxes (
+  id              uuid primary key default gen_random_uuid(),
+  warehouse_id    uuid not null references public.warehouses(id) on delete cascade,
+  name            text not null,
+  location        text,
+  qr_code         text not null unique default gen_random_uuid()::text,
+  nearest_expiry  date,
+  item_count      int not null default 0,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+create index if not exists idx_boxes_warehouse on public.boxes(warehouse_id);
+create index if not exists idx_boxes_qr on public.boxes(qr_code);
+
+-- items
+create table if not exists public.items (
+  id           uuid primary key default gen_random_uuid(),
+  box_id       uuid not null references public.boxes(id) on delete cascade,
+  name         text not null,
+  quantity     numeric not null default 1,
+  unit         text not null default 'ks' check (unit in ('ks','g','kg','ml','l','bal')),
+  expiry_date  date,
+  barcode      text,
+  image_url    text,
+  category     text check (category in ('potraviny','léky','voda','dezinfekce','vybavení','energie','dokumenty','ostatní')),
+  notes        text,
+  added_by     uuid references public.users(id) on delete set null,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create index if not exists idx_items_box on public.items(box_id);
+create index if not exists idx_items_expiry on public.items(expiry_date);
+
+-- custom_products – lokální DB pro každý sklad
+create table if not exists public.custom_products (
+  id                  uuid primary key default gen_random_uuid(),
+  warehouse_id        uuid not null references public.warehouses(id) on delete cascade,
+  barcode             text not null,
+  name                text not null,
+  category            text,
+  image_url           text,
+  typical_expiry_days int,
+  created_by          uuid references public.users(id) on delete set null,
+  created_at          timestamptz not null default now(),
+  unique (warehouse_id, barcode)
+);
+
+create index if not exists idx_custom_products_warehouse on public.custom_products(warehouse_id);
+
+-- ============================================================================
+-- FUNCTIONS + TRIGGERS
+-- ============================================================================
+
+-- Automaticky vytvoř public.users záznam po registraci v auth.users
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.users (id, email, display_name)
+  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'full_name', new.email))
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- Přepočet nearest_expiry a item_count na boxu po změně items
+create or replace function public.recalc_box_cache()
+returns trigger
+language plpgsql
+as $$
+declare
+  target_box uuid;
+begin
+  target_box := coalesce(new.box_id, old.box_id);
+  update public.boxes
+  set
+    item_count = (
+      select count(*) from public.items where box_id = target_box
+    ),
+    nearest_expiry = (
+      select min(expiry_date) from public.items
+      where box_id = target_box and expiry_date is not null
+    ),
+    updated_at = now()
+  where id = target_box;
+  return null;
+end;
+$$;
+
+drop trigger if exists items_recalc_box on public.items;
+create trigger items_recalc_box
+  after insert or update or delete on public.items
+  for each row execute function public.recalc_box_cache();
+
+-- updated_at bump na items při UPDATE
+create or replace function public.bump_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists items_bump_updated_at on public.items;
+create trigger items_bump_updated_at
+  before update on public.items
+  for each row execute function public.bump_updated_at();
+
+-- ============================================================================
+-- RLS HELPER FUNCTIONS
+-- ============================================================================
+
+-- Helper: je uživatel member skladu?
+create or replace function public.is_member(wh uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.warehouse_members
+    where warehouse_id = wh and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_owner(wh uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.warehouse_members
+    where warehouse_id = wh and user_id = auth.uid() and role = 'owner'
+  );
+$$;
+
+-- ============================================================================
+-- RPC FUNCTIONS
+-- ============================================================================
+
+-- create_warehouse_for_me
+-- Řeší chicken-and-egg RLS problém:
+-- Přímé klient INSERT do `warehouses` s `.insert().select()` selže, protože
+-- SELECT RLS policy (`is_member(id)`) na RETURNING požaduje, aby user byl
+-- member — ale member se stává až dalším insertem do warehouse_members.
+-- Tato SECURITY DEFINER funkce bypassne RLS a udělá oba inserty atomicky.
+create or replace function public.create_warehouse_for_me(wh_name text)
+returns public.warehouses
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  new_wh public.warehouses;
+  current_uid uuid;
+begin
+  current_uid := auth.uid();
+  if current_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  -- Zajisti, že public.users záznam existuje (kdyby handle_new_user trigger
+  -- nezběhl nebo user byl vytvořen adminem mimo auth flow)
+  insert into public.users (id, email, display_name)
+  select current_uid, au.email, coalesce(au.raw_user_meta_data->>'full_name', au.email)
+  from auth.users au where au.id = current_uid
+  on conflict (id) do nothing;
+
+  -- Vytvoř warehouse
+  insert into public.warehouses (owner_id, name)
+  values (current_uid, wh_name)
+  returning * into new_wh;
+
+  -- Přidej ownera jako member
+  insert into public.warehouse_members (warehouse_id, user_id, role)
+  values (new_wh.id, current_uid, 'owner');
+
+  return new_wh;
+end;
+$$;
+
+grant execute on function public.create_warehouse_for_me(text) to authenticated;
+
+-- ============================================================================
+-- RLS POLICIES
+-- ============================================================================
+
+alter table public.users enable row level security;
+alter table public.warehouses enable row level security;
+alter table public.warehouse_members enable row level security;
+alter table public.invitations enable row level security;
+alter table public.boxes enable row level security;
+alter table public.items enable row level security;
+alter table public.custom_products enable row level security;
+
+-- users: každý vidí sám sebe a členy svých skladů
+drop policy if exists users_self on public.users;
+create policy users_self on public.users for select
+  using (id = auth.uid() or id in (
+    select user_id from public.warehouse_members
+    where warehouse_id in (
+      select warehouse_id from public.warehouse_members where user_id = auth.uid()
+    )
+  ));
+
+drop policy if exists users_update_self on public.users;
+create policy users_update_self on public.users for update
+  using (id = auth.uid()) with check (id = auth.uid());
+
+-- warehouses: jen členové
+drop policy if exists warehouses_select on public.warehouses;
+create policy warehouses_select on public.warehouses for select
+  using (public.is_member(id));
+
+drop policy if exists warehouses_insert on public.warehouses;
+create policy warehouses_insert on public.warehouses for insert
+  with check (owner_id = auth.uid());
+
+drop policy if exists warehouses_update on public.warehouses;
+create policy warehouses_update on public.warehouses for update
+  using (public.is_owner(id)) with check (public.is_owner(id));
+
+drop policy if exists warehouses_delete on public.warehouses;
+create policy warehouses_delete on public.warehouses for delete
+  using (public.is_owner(id));
+
+-- warehouse_members
+drop policy if exists members_select on public.warehouse_members;
+create policy members_select on public.warehouse_members for select
+  using (public.is_member(warehouse_id));
+
+drop policy if exists members_insert on public.warehouse_members;
+create policy members_insert on public.warehouse_members for insert
+  with check (
+    -- vkládá sám sebe (přijímá pozvánku) nebo je owner
+    user_id = auth.uid() or public.is_owner(warehouse_id)
+  );
+
+drop policy if exists members_delete on public.warehouse_members;
+create policy members_delete on public.warehouse_members for delete
+  using (public.is_owner(warehouse_id) or user_id = auth.uid());
+
+-- invitations: member vidí, owner spravuje
+drop policy if exists invitations_select on public.invitations;
+create policy invitations_select on public.invitations for select
+  using (public.is_member(warehouse_id));
+
+drop policy if exists invitations_insert on public.invitations;
+create policy invitations_insert on public.invitations for insert
+  with check (public.is_owner(warehouse_id));
+
+drop policy if exists invitations_update on public.invitations;
+create policy invitations_update on public.invitations for update
+  using (public.is_owner(warehouse_id) or auth.uid() is not null)
+  with check (true);
+
+drop policy if exists invitations_delete on public.invitations;
+create policy invitations_delete on public.invitations for delete
+  using (public.is_owner(warehouse_id));
+
+-- boxes: všichni členové čtou/editují, jen owner maže
+drop policy if exists boxes_select on public.boxes;
+create policy boxes_select on public.boxes for select
+  using (public.is_member(warehouse_id));
+
+drop policy if exists boxes_insert on public.boxes;
+create policy boxes_insert on public.boxes for insert
+  with check (public.is_member(warehouse_id));
+
+drop policy if exists boxes_update on public.boxes;
+create policy boxes_update on public.boxes for update
+  using (public.is_member(warehouse_id)) with check (public.is_member(warehouse_id));
+
+drop policy if exists boxes_delete on public.boxes;
+create policy boxes_delete on public.boxes for delete
+  using (public.is_owner(warehouse_id));
+
+-- items: členové CRUD
+drop policy if exists items_select on public.items;
+create policy items_select on public.items for select
+  using (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+drop policy if exists items_insert on public.items;
+create policy items_insert on public.items for insert
+  with check (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+drop policy if exists items_update on public.items;
+create policy items_update on public.items for update
+  using (public.is_member((select warehouse_id from public.boxes where id = box_id)))
+  with check (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+drop policy if exists items_delete on public.items;
+create policy items_delete on public.items for delete
+  using (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+-- custom_products: členové CRUD
+drop policy if exists custom_products_select on public.custom_products;
+create policy custom_products_select on public.custom_products for select
+  using (public.is_member(warehouse_id));
+
+drop policy if exists custom_products_insert on public.custom_products;
+create policy custom_products_insert on public.custom_products for insert
+  with check (public.is_member(warehouse_id));
+
+drop policy if exists custom_products_update on public.custom_products;
+create policy custom_products_update on public.custom_products for update
+  using (public.is_member(warehouse_id)) with check (public.is_member(warehouse_id));
+
+drop policy if exists custom_products_delete on public.custom_products;
+create policy custom_products_delete on public.custom_products for delete
+  using (public.is_member(warehouse_id));
+
+-- ============================================================================
+-- REALTIME PUBLICATION
+-- ============================================================================
+-- Supabase používá `supabase_realtime` publication pro postgres_changes
+-- events. Tabulky musí být explicitně přidány, jinak `subscribeBoxes` /
+-- `subscribeItems` ve Stockr klientovi nedostanou žádné eventy.
+--
+-- DO block s exception handlingem — kdyby už tabulky v publication byly
+-- (při re-runu schematu), alter by hodil duplicate_object error.
+
+do $$ begin
+  alter publication supabase_realtime add table public.boxes;
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.items;
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.warehouses;
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.warehouse_members;
+exception when duplicate_object then null;
+end $$;
+
+-- ============================================================================
+-- STORAGE
+-- ============================================================================
+-- product-images bucket pro fotky produktů (Claude Vision, manuální foto)
+-- Public: ON — obrázky jsou dostupné přes HTTPS URL bez auth.
+
+insert into storage.buckets (id, name, public)
+values ('product-images', 'product-images', true)
+on conflict (id) do nothing;
