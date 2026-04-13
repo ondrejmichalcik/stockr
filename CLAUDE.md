@@ -114,17 +114,27 @@ V `src/types/database.ts`:
 
 Konkrétní barvy jsou v `src/theme/colors.ts` (Sprint 2.5 design system). Funkce `compareBoxesByExpiry` seřazuje bedny od expired po none, uvnitř skupiny podle data.
 
-### Design system (po Sprintu 2.5)
-- **Barevná paleta** v `src/theme/colors.ts` — odvozená z brand green `#1E5F3E` (primary / surface / text / border / danger / warning / success + expiry state barvy)
-- **Spacing + typography tokeny** v `src/theme/` — nepoužívat magic numbers v stylech
+### Design system (po Sprintu 2.6)
+- **Light-first paleta** v `src/theme/colors.ts` — subtle sage-tinted background, opaque white cards, sage green primary accent, standard iOS-like status colors
+- **Dark `hero*` tokeny** zachované pro login/splash (plný dark bg s hero image)
+- **Spacing / typography / radius / shadows** tokeny beze změny oproti Sprintu 2.5
+- **Shadow depth** — na light bg jsou stíny vidět, proto aktivně používat `shadows.sm/md/lg` pro depth; na dark bg stíny neměly efekt
 - **Nové barvy přidávat jen do palette** — pokud potřebuješ odstín, který tam není, nejdřív ověř, jestli existující token nestačí
 
-### Ikonografie
-- **Custom ikony** generované přes nano banana, stylově sladěné s logem (zelená paleta, stejný výtvarný jazyk)
-- Uloženy v `assets/icons/` jako PNG (512×512) nebo SVG
-- Wrapnuté v `<Icon name="..." />` komponentě pro konzistentní použití
-- **Nepřidávat `@expo/vector-icons` / Ionicons / SF Symbols** — držíme se vlastního setu kvůli vizuální soudržnosti
-- Emoji v UI jen pokud jsou záměrná součást obsahu, ne jako ikony
+### Ikonografie (po Sprintu 2.6)
+- **SF Symbols via `expo-symbols`** — standard pro **všechny utility / chrome ikony**
+  (nav chevrony, close, more, buttons, list row indicators, category icons,
+  tab bar, form field icons, action sheet triggers). Native iOS rendering,
+  ~5000 ikon zdarma, konzistentní s iOS systémem.
+- **Custom 3D "brand" ikony** v `assets/icons/` jen pro **hero momenty**:
+  login/splash background, large empty-state illustrations (80–120 px),
+  onboarding a marketing screens (Sprint 4+). Zachováno 32 ikon ze Sprintu 2.5.
+- **Unified `<Icon>` komponenta** s dual namespace:
+  `<Icon sf="magnifyingglass" />` pro SF Symbols,
+  `<Icon brand="box-generic" size={96} />` pro hero 3D PNG assety.
+- **NO `@expo/vector-icons` / Ionicons** — SF Symbols jsou více iOS-native.
+  (Poznámka: Stockr je iOS-only, SF Symbols nejsou Android compat.)
+- Emoji v UI jen pokud jsou záměrná součást obsahu, ne jako ikony.
 
 ---
 
@@ -157,7 +167,7 @@ Sprint 2 přidal: `expo-camera`, `expo-haptics`, `expo-clipboard`, `@react-nativ
 ### 6. Sprint stav
 Vývoj běží po sprintech. Detailní stav → **[`.claude/implementation-plan.md`](.claude/implementation-plan.md)**
 
-Aktuálně: **Sprint 2.5 uzavřen** (2026-04-13). Celá appka v angličtině, dark sage theme, 32 custom ikon, Expo SDK 55. Next: Sprint 3 (Brother tisk, Claude Vision, image upload).
+Aktuálně: **Sprint 2.6 běží** — UI redesign z dark gradient do light NoWaste-style (pill cards, tab bar, FAB, SF Symbols). Sprint 2.5 uzavřen (dark theme rejected in context, hero login zachován). Next: Sprint 3 (Brother tisk, Claude Vision, image upload).
 
 ---
 

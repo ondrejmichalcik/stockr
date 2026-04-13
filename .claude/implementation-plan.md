@@ -166,6 +166,101 @@ Insertnutý mezi Sprint 2 a Sprint 3. Cíl: projekt převést do angličtiny, sj
 
 ---
 
+## Sprint 2.6 – UI redesign (NoWaste style) 🚧
+
+**Kontext:** Sprint 2.5 uzavřel dark frosted-glass theme napříč celou appkou. User po použití v kontextu zpětně odmítl tento směr pro utility screens ("z toho UI designu se mi líbí akorát ta login screen, zbytek jsem asi trochu přemyslel"). Login hero zůstává, zbytek redesign do clean light NoWaste-style — pill cards, tab bar, FAB, SF Symbols místo 3D custom ikon.
+
+**Reference:** NoWaste food inventory app (Main Pantry detail screen uložený v `screen/nowaste_fridge_detail.png`).
+
+### Fáze 1 — Theme retune (light-first palette)
+
+- ⏳ **`src/theme/colors.ts`** rewrite z dark-first na light-first
+  - `background` = `#F4F7F4` (subtle sage-tint, almost white)
+  - `surface` = `#FFFFFF` (opaque cards)
+  - `text` / `textMuted` / `textSubtle` — dark-on-light hierarchie
+  - `border` = `#E5E8E5` (subtle dividery)
+  - `primary` = sage green (zachován)
+  - `danger` / `warning` / `success` — standard iOS-like saturované barvy (ne tlumené pro dark)
+  - Expiry states — pastelové backgrounds (`#FEE2E2` red, `#FEF3C7` amber, `#DCEBE2` green, neutrální gray)
+  - **`hero*` tokeny zachované** — login je pořád tmavý
+- ⏳ **Shadows aktivně používat** — na light bg jsou vidět, na dark neměly efekt
+- ⏳ **Ostatní theme moduly beze změny** (spacing / typography / radius / shadows)
+
+### Fáze 2 — Icon library switch (SF Symbols)
+
+- ⏳ **Install `expo-symbols`** — oficiální Expo package pro SF Symbols
+- ⏳ **Rewrite `src/components/Icon.tsx`** na dual-namespace komponent:
+  - `<Icon sf="magnifyingglass" size={20} color={colors.text} />` → expo-symbols
+  - `<Icon brand="box-generic" size={96} />` → existující PNG asset z `assets/icons/`
+- ⏳ **Migrace všech `<Icon name="...">` call sites** na `<Icon sf="..." />` pro chrome ikony
+- ⏳ **Zachovat 3D ikony pro**:
+  - Login/splash (už je používají jen jako hero image)
+  - Empty states (velké 80–120 px illustrations): `box-generic` (empty Dashboard), `inbox` (empty box), `warning` (error screens), `camera` (permission screens)
+- ⏳ **Category indicators v list cards** — SF Symbols (`fork.knife`, `pills`, `drop`, `wrench`, `bolt.fill`, `doc`, `shippingbox`, `bandage.fill`)
+- ⏳ **`CATEGORY_SF_ICON` mapping** v `database.ts` (nahradí/doplní `CATEGORY_ICON` pro brand assets)
+
+### Fáze 3 — Component primitives
+
+- ⏳ **`src/components/Card.tsx`** — pill card, opaque white bg, shadow md, rounded radius lg, flexRow
+- ⏳ **`src/components/FAB.tsx`** — floating pill button, sage green, icon + text, position absolute, shadow lg
+- ⏳ **`src/components/ListHeader.tsx`** — title + search button + filter/sort icon
+- ⏳ **`src/components/StatusDot.tsx`** — small colored circle pro expiry status indicator
+
+### Fáze 4 — Tab bar restructure
+
+- ⏳ **`app/(app)/_layout.tsx`** — přepsat ze `Stack` na `Tabs` (Expo Router)
+- ⏳ **4 tab screens:**
+  - `app/(app)/(tabs)/boxes.tsx` (bývalý `index.tsx`)
+  - `app/(app)/(tabs)/items.tsx` (**nový** — flat cross-box expiring timeline)
+  - `app/(app)/(tabs)/scan.tsx` (přesun)
+  - `app/(app)/(tabs)/settings.tsx` (**nový** — sign out, placeholder pro future)
+- ⏳ **Custom tab bar styling** — light bg, hairline top border, active tab sage green
+- ⏳ **Tab bar icons** — SF Symbols (`shippingbox.fill`, `list.bullet`, `qrcode.viewfinder`, `gearshape.fill`)
+- ⏳ **Stack screens mimo tabs** — `box/[id]`, `box/new`, `box/[id]/add-items` zůstávají jako push
+
+### Fáze 5 — Screen rewrites
+
+- ⏳ **`boxes.tsx`** (bývalý Dashboard) — ListHeader + pill cards + FAB `+ New box`
+- ⏳ **`items.tsx`** (**nový**) — ListHeader + pill cards s `in [Box name]` subtitle, sorted by nearest expiry
+- ⏳ **`settings.tsx`** (**nový**) — sign out + placeholder sekce
+- ⏳ **`box/[id].tsx`** — light top bar, pill cards, FAB `+ Add items`
+- ⏳ **`box/new.tsx`** — light form screen
+- ⏳ **`box/[id]/add-items.tsx`** — light form + queue chip style
+- ⏳ **`ItemEditSheet` + `BoxEditSheet`** — light modal bg, opaque inputs
+
+### Fáze 6 — New DB query (pro Items tab)
+
+- ⏳ **`src/lib/supabase.ts`** — nová funkce `listAllItemsInWarehouse(warehouseId)`
+  ```sql
+  select items.*, boxes.name as box_name
+  from items
+  join boxes on items.box_id = boxes.id
+  where boxes.warehouse_id = $1
+  order by items.expiry_date nulls last
+  ```
+- ⏳ **TS type** — `ItemWithBox = Item & { box_name: string }`
+
+### Fáze 7 — Cleanup
+
+- ⏳ **`<ScreenBackground>` wrapper** — ponechat jen v loginu; odstranit ze všech utility screens
+- ⏳ **`assets/screen-bg.png`** — ponechat (nestojí to nic) nebo smazat pro menší bundle
+- ⏳ **Dark-only tokens** — zachovat v `hero*` skupině, odstranit z utility code cest
+- ⏳ **Unused 3D ikony** — zachovat v `assets/icons/` dormant pro budoucí hero moments
+
+### Akceptační kritéria Sprintu 2.6
+
+- [ ] Appka používá 4-tab layout (Boxes / Items / Scan / Settings)
+- [ ] Všechny utility screens mají light bg bez gradientů
+- [ ] Pill cards místo frosted glass rows
+- [ ] Floating pill FAB pro primary action (kontextuální per screen)
+- [ ] SF Symbols pro všechny chrome ikony
+- [ ] 3D custom ikony jen v empty states a login (+ splash)
+- [ ] Login screen beze změny (dark hero)
+- [ ] Items tab ukazuje cross-box flat list s box name per item
+- [ ] Sprint 1 + 2 flows stále fungují
+
+---
+
 ## Sprint 3 – Tisk a AI ⏳
 
 ### Brother PT-P710BT tisk (revised plan)
