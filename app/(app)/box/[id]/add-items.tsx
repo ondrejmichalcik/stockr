@@ -43,6 +43,7 @@ import {
   toIsoDate,
 } from '@/src/types/database';
 import type { Category, Unit } from '@/src/types/database';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 // ---------------------------------------------------------------------------
 // Queue item – local state before batch save
@@ -399,7 +400,7 @@ export default function AddItemsScreen() {
               value={draft.name ?? ''}
               onChangeText={(v) => setDraft({ ...draft, name: v })}
               placeholder="Název produktu"
-              placeholderTextColor="#B0B0B0"
+              placeholderTextColor={colors.textSubtle}
               style={styles.input}
             />
 
@@ -514,7 +515,7 @@ export default function AddItemsScreen() {
 
       {saving && (
         <View style={styles.savingOverlay}>
-          <ActivityIndicator color="#fff" size="large" />
+          <ActivityIndicator color="#FFFFFF" size="large" />
           <Text style={styles.savingText}>Ukládám {queue.length} položek…</Text>
         </View>
       )}
@@ -546,7 +547,7 @@ function SourceBanner({
   if (source === 'custom') {
     return (
       <View style={[styles.sourceBanner, styles.sourceCustom]}>
-        <Text style={[styles.sourceText, { color: '#27500A' }]}>
+        <Text style={[styles.sourceText, { color: colors.successText }]}>
           ✓ Dříve přidaný produkt — doplň množství a datum
         </Text>
       </View>
@@ -555,7 +556,7 @@ function SourceBanner({
   if (source === 'off') {
     return (
       <View style={[styles.sourceBanner, styles.sourceOff]}>
-        <Text style={[styles.sourceText, { color: '#0B4F6C' }]}>
+        <Text style={[styles.sourceText, { color: colors.infoText }]}>
           ✓ Načteno z Open Food Facts — zkontroluj a doplň datum
         </Text>
       </View>
@@ -564,7 +565,7 @@ function SourceBanner({
   // manual
   return (
     <View style={[styles.sourceBanner, styles.sourceManual]}>
-      <Text style={[styles.sourceText, { color: '#633806' }]}>
+      <Text style={[styles.sourceText, { color: colors.warningText }]}>
         {barcode
           ? `⚠️ Produkt ${barcode} není v databázi — vyplň ručně`
           : 'Ruční zadání'}
@@ -624,7 +625,10 @@ function QueueChip({
   onSameAgain: () => void;
 }) {
   const status = getExpiryStatus(draft.expiry_date);
-  const palette = status === 'none' ? { bg: '#EFEFEF', fg: '#666' } : EXPIRY_COLORS[status];
+  const palette =
+    status === 'none'
+      ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
+      : EXPIRY_COLORS[status];
   return (
     <View style={styles.queueChip}>
       <Pressable onPress={onRemove} style={styles.queueRemove}>
@@ -657,17 +661,29 @@ function QueueChip({
 
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F7' },
+  container: { flex: 1, backgroundColor: colors.background },
   center: {
     flex: 1,
-    backgroundColor: '#F5F5F7',
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
+    padding: spacing.xxl,
   },
-  hint: { color: '#666' },
-  permTitle: { fontSize: 22, fontWeight: '700', color: '#111', marginBottom: 12 },
-  permText: { color: '#666', textAlign: 'center', marginBottom: 24, lineHeight: 20 },
+  hint: {
+    ...typography.subhead,
+    color: colors.textMuted,
+  },
+  permTitle: {
+    ...typography.title2,
+    color: colors.text,
+    marginBottom: spacing.md,
+  },
+  permText: {
+    ...typography.subhead,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
   // Scanner
   cameraWrap: { flex: 1, backgroundColor: '#000', overflow: 'hidden' },
   scanOverlay: {
@@ -678,130 +694,165 @@ const styles = StyleSheet.create({
   scanFrame: {
     width: 280,
     height: 140,
-    borderRadius: 12,
+    borderRadius: radius.md,
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
   },
   scanText: {
-    color: '#fff',
+    ...typography.subhead,
+    color: '#FFFFFF',
     fontWeight: '600',
-    marginTop: 20,
+    marginTop: spacing.lg,
     textShadowColor: 'rgba(0,0,0,0.6)',
     textShadowRadius: 4,
   },
   scanActions: {
     flexDirection: 'row',
-    padding: 12,
-    gap: 8,
+    padding: spacing.md,
+    gap: spacing.sm,
     backgroundColor: '#000',
   },
   smallBtn: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
     alignItems: 'center',
   },
   // Form
-  formScroll: { padding: 16, gap: 4 },
+  formScroll: { padding: spacing.lg, gap: spacing.xs },
   draftImage: {
     width: 120,
     height: 120,
-    borderRadius: 12,
+    borderRadius: radius.md,
     alignSelf: 'center',
-    marginBottom: 8,
-    backgroundColor: '#fff',
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
     resizeMode: 'contain',
   },
   draftImagePlaceholder: {
     width: 120,
     height: 120,
-    borderRadius: 12,
+    borderRadius: radius.md,
     alignSelf: 'center',
-    marginBottom: 8,
-    backgroundColor: '#fff',
+    marginBottom: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     justifyContent: 'center',
     alignItems: 'center',
   },
   label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 12,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    ...typography.label,
+    color: colors.textMuted,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
   },
   input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#111',
+    ...typography.body,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md,
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
   dateField: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: spacing.md + 2,
   },
-  dateText: { fontSize: 16, color: '#111', fontWeight: '500' },
-  datePlaceholder: { color: '#B0B0B0', fontWeight: '400' },
-  dateChevron: { fontSize: 16, color: '#666' },
+  dateText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  datePlaceholder: { color: colors.textSubtle, fontWeight: '400' },
+  dateChevron: {
+    fontSize: 16,
+    color: colors.textMuted,
+  },
   datePickerWrap: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginTop: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
     overflow: 'hidden',
   },
-  row: { flexDirection: 'row', gap: 12 },
+  row: { flexDirection: 'row', gap: spacing.md },
   btn: {
-    marginTop: 16,
-    paddingVertical: 16,
-    borderRadius: 12,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.md,
     alignItems: 'center',
   },
-  btnPrimary: { backgroundColor: '#111' },
-  btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  btnSecondary: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#E0E0E0' },
-  btnSecondaryText: { color: '#111', fontWeight: '600', fontSize: 16 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#E5E5E7',
+  btnPrimary: { backgroundColor: colors.primary },
+  btnPrimaryText: {
+    ...typography.bodyStrong,
+    color: colors.textOnPrimary,
   },
-  chipActive: { backgroundColor: '#111', borderColor: '#111' },
-  chipText: { color: '#111', fontSize: 13, fontWeight: '600' },
-  chipTextActive: { color: '#fff' },
+  btnSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  btnSecondaryText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  chip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  chipText: {
+    ...typography.footnote,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  chipTextActive: { color: colors.textOnPrimary },
   // Queue
   queueContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.surfaceElevated,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#E5E5E7',
-    paddingTop: 8,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
   },
   queueHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 4,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xs,
   },
-  queueTitle: { fontSize: 14, fontWeight: '700', color: '#111' },
-  saveAllText: { fontSize: 14, fontWeight: '700', color: '#007AFF' },
-  queueList: { paddingHorizontal: 12, paddingVertical: 8, gap: 8 },
+  queueTitle: {
+    ...typography.footnote,
+    color: colors.text,
+    fontWeight: '700',
+  },
+  saveAllText: {
+    ...typography.footnote,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  queueList: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm },
   queueChip: {
     width: 140,
-    backgroundColor: '#F5F5F7',
-    borderRadius: 12,
-    padding: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
     alignItems: 'center',
   },
   queueRemove: {
@@ -811,40 +862,59 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1,
   },
-  queueRemoveText: { color: '#fff', fontSize: 16, lineHeight: 18 },
-  queueImage: { width: 50, height: 50, borderRadius: 8, resizeMode: 'contain' },
+  queueRemoveText: { color: '#FFFFFF', fontSize: 16, lineHeight: 18 },
+  queueImage: { width: 50, height: 50, borderRadius: radius.sm + 2, resizeMode: 'contain' },
   queueEmoji: { fontSize: 36, marginVertical: 4 },
-  queueName: { fontSize: 11, fontWeight: '600', color: '#111', textAlign: 'center', marginTop: 4 },
-  queueQty: { fontSize: 10, color: '#666', marginTop: 1 },
+  queueName: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.text,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  queueQty: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
   queueBadge: {
     marginTop: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: radius.sm,
   },
   queueBadgeText: { fontSize: 9, fontWeight: '700' },
   queueAgainBtn: {
     marginTop: 6,
     paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    backgroundColor: '#fff',
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
-  queueAgainText: { fontSize: 10, fontWeight: '600', color: '#111' },
+  queueAgainText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.text,
+  },
   savingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: colors.scrim,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  savingText: { color: '#fff', marginTop: 12, fontWeight: '600' },
+  savingText: {
+    ...typography.subhead,
+    color: '#FFFFFF',
+    marginTop: spacing.md,
+    fontWeight: '600',
+  },
 
   // Torch
   torchBtn: {
@@ -864,30 +934,49 @@ const styles = StyleSheet.create({
   toast: {
     position: 'absolute',
     top: 60,
-    left: 16,
-    right: 16,
-    backgroundColor: '#27500A',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 12,
+    left: spacing.lg,
+    right: spacing.lg,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
     shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 6,
   },
-  toastText: { color: '#fff', fontWeight: '700', fontSize: 14, textAlign: 'center' },
+  toastText: {
+    ...typography.footnote,
+    color: colors.textOnPrimary,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
 
   // Source banner (J)
   sourceBanner: {
     alignSelf: 'stretch',
-    marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
   },
-  sourceCustom: { backgroundColor: '#EAF3DE' },
-  sourceOff: { backgroundColor: '#DCEEF5' },
-  sourceManual: { backgroundColor: '#FAEEDA' },
-  sourceText: { fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  sourceCustom: {
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBgStrong,
+  },
+  sourceOff: {
+    backgroundColor: colors.infoBg,
+    borderColor: colors.infoBg,
+  },
+  sourceManual: {
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBgStrong,
+  },
+  sourceText: {
+    ...typography.footnote,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
 });

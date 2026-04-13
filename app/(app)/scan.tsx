@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { getBoxByQr } from '@/src/lib/supabase';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export default function ScanScreen() {
   const router = useRouter();
@@ -109,21 +110,36 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   center: {
     flex: 1,
-    backgroundColor: '#F5F5F7',
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
+    padding: spacing.xxl,
   },
-  hint: { color: '#666' },
-  permTitle: { fontSize: 22, fontWeight: '700', color: '#111', marginBottom: 12 },
-  permText: { color: '#666', textAlign: 'center', marginBottom: 24, lineHeight: 20 },
+  hint: {
+    ...typography.subhead,
+    color: colors.textMuted,
+  },
+  permTitle: {
+    ...typography.title2,
+    color: colors.text,
+    marginBottom: spacing.md,
+  },
+  permText: {
+    ...typography.subhead,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
   btnPrimary: {
-    backgroundColor: '#111',
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md + 2,
+    borderRadius: radius.md,
   },
-  btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  btnPrimaryText: {
+    ...typography.bodyStrong,
+    color: colors.textOnPrimary,
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
@@ -132,16 +148,16 @@ const styles = StyleSheet.create({
   frame: {
     width: 260,
     height: 260,
-    borderRadius: 24,
+    borderRadius: radius.xxl,
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
     backgroundColor: 'transparent',
   },
   overlayText: {
-    color: '#fff',
-    fontSize: 16,
+    ...typography.callout,
+    color: '#FFFFFF',
     fontWeight: '600',
-    marginTop: 24,
+    marginTop: spacing.xl,
     textShadowColor: 'rgba(0,0,0,0.6)',
     textShadowRadius: 4,
   },
@@ -151,14 +167,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: 'center',
-    paddingTop: 16,
+    paddingTop: spacing.lg,
   },
   cancelBtn: {
     backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 24,
-    marginBottom: 16,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.xxl,
+    marginBottom: spacing.lg,
   },
-  cancelText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  cancelText: {
+    ...typography.callout,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
 });

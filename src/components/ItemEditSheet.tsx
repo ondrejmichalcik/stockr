@@ -27,6 +27,7 @@ import {
   toIsoDate,
 } from '@/src/types/database';
 import type { Category, Item, Unit } from '@/src/types/database';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export interface ItemEditSheetProps {
   item: Item;
@@ -129,7 +130,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
         <Text style={styles.headerTitle}>Upravit položku</Text>
         <Pressable hitSlop={12} onPress={handleSave} disabled={saving}>
           {saving ? (
-            <ActivityIndicator />
+            <ActivityIndicator color={colors.primary} />
           ) : (
             <Text style={[styles.headerBtn, styles.headerBtnPrimary]}>Uložit</Text>
           )}
@@ -146,7 +147,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
             value={draft.name}
             onChangeText={(v) => setDraft({ ...draft, name: v })}
             placeholder="Název produktu"
-            placeholderTextColor="#B0B0B0"
+            placeholderTextColor={colors.textSubtle}
             style={styles.input}
           />
 
@@ -275,86 +276,114 @@ function ChipRow<T extends string>({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F7' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5E7',
-    backgroundColor: '#fff',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
   },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#111' },
-  headerBtn: { fontSize: 16, color: '#007AFF', fontWeight: '500' },
+  headerTitle: {
+    ...typography.headline,
+    color: colors.text,
+  },
+  headerBtn: {
+    ...typography.callout,
+    color: colors.primary,
+    fontWeight: '500',
+  },
   headerBtnPrimary: { fontWeight: '700' },
-  scroll: { padding: 16, gap: 4 },
+  scroll: { padding: spacing.lg, gap: spacing.xs },
   label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    ...typography.label,
+    color: colors.textMuted,
+    marginTop: spacing.md + 2,
+    marginBottom: spacing.xs + 2,
   },
   input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#111',
+    ...typography.body,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md,
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
-  row: { flexDirection: 'row', gap: 12 },
-  dateRow: { flexDirection: 'row', gap: 8 },
+  row: { flexDirection: 'row', gap: spacing.md },
+  dateRow: { flexDirection: 'row', gap: spacing.sm },
   dateField: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: spacing.md + 2,
   },
-  dateText: { fontSize: 16, color: '#111', fontWeight: '500' },
-  datePlaceholder: { color: '#B0B0B0', fontWeight: '400' },
-  dateChevron: { fontSize: 16, color: '#666' },
+  dateText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  datePlaceholder: { color: colors.textSubtle, fontWeight: '400' },
+  dateChevron: {
+    fontSize: 16,
+    color: colors.textMuted,
+  },
   dateClearBtn: {
-    paddingHorizontal: 14,
+    paddingHorizontal: spacing.md + 2,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
-  dateClearText: { color: '#E23B3B', fontWeight: '600', fontSize: 13 },
+  dateClearText: {
+    ...typography.footnote,
+    color: colors.danger,
+    fontWeight: '600',
+  },
   datePickerWrap: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginTop: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#fff',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
-  chipActive: { backgroundColor: '#111', borderColor: '#111' },
-  chipText: { color: '#111', fontSize: 13, fontWeight: '600' },
-  chipTextActive: { color: '#fff' },
+  chipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  chipText: {
+    ...typography.footnote,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  chipTextActive: { color: colors.textOnPrimary },
   deleteBtn: {
-    marginTop: 32,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: '#FCEBEB',
+    marginTop: spacing.xxl,
+    paddingVertical: spacing.md + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: colors.dangerBgStrong,
     alignItems: 'center',
   },
-  deleteBtnText: { color: '#E23B3B', fontWeight: '700', fontSize: 15 },
+  deleteBtnText: {
+    ...typography.subhead,
+    color: colors.danger,
+    fontWeight: '700',
+  },
 });

@@ -20,6 +20,7 @@ import { Stack, useRouter } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
 import { createBox, getMyWarehouse, supabase } from '@/src/lib/supabase';
 import type { Box } from '@/src/types/database';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export default function NewBoxScreen() {
   const router = useRouter();
@@ -66,7 +67,7 @@ export default function NewBoxScreen() {
           ) : null}
 
           <View style={styles.qrWrap}>
-            <QRCode value={createdBox.qr_code} size={220} backgroundColor="#fff" />
+            <QRCode value={createdBox.qr_code} size={220} backgroundColor="#FFFFFF" />
           </View>
 
           <Text style={styles.qrCodeText}>{createdBox.qr_code}</Text>
@@ -114,7 +115,7 @@ export default function NewBoxScreen() {
             value={name}
             onChangeText={setName}
             placeholder="Léky A"
-            placeholderTextColor="#B0B0B0"
+            placeholderTextColor={colors.textSubtle}
             style={styles.input}
             autoFocus
             returnKeyType="next"
@@ -125,7 +126,7 @@ export default function NewBoxScreen() {
             value={location}
             onChangeText={setLocation}
             placeholder="Police 2, řada 1"
-            placeholderTextColor="#B0B0B0"
+            placeholderTextColor={colors.textSubtle}
             style={styles.input}
             returnKeyType="done"
             onSubmitEditing={handleSave}
@@ -137,7 +138,7 @@ export default function NewBoxScreen() {
             disabled={saving}
           >
             {saving ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.textOnPrimary} />
             ) : (
               <Text style={styles.btnPrimaryText}>Vytvořit bednu</Text>
             )}
@@ -149,67 +150,93 @@ export default function NewBoxScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F7' },
-  formScroll: { padding: 16, gap: 4 },
+  container: { flex: 1, backgroundColor: colors.background },
+  formScroll: { padding: spacing.lg, gap: spacing.xs },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 12,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    ...typography.label,
+    color: colors.textMuted,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs + 2,
   },
   input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#111',
+    ...typography.body,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
   btn: {
-    marginTop: 16,
-    paddingVertical: 16,
-    borderRadius: 12,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  btnPrimary: { backgroundColor: '#111' },
-  btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  btnSecondary: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#E0E0E0' },
-  btnSecondaryText: { color: '#111', fontWeight: '600', fontSize: 16 },
-  btnDisabled: { backgroundColor: '#F0F0F0' },
-  btnDisabledText: { color: '#999', fontWeight: '600', fontSize: 16 },
+  btnPrimary: { backgroundColor: colors.primary },
+  btnPrimaryText: {
+    ...typography.bodyStrong,
+    color: colors.textOnPrimary,
+  },
+  btnSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  btnSecondaryText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  btnDisabled: { backgroundColor: colors.surface, opacity: 0.5 },
+  btnDisabledText: {
+    ...typography.body,
+    color: colors.textSubtle,
+    fontWeight: '600',
+  },
   btnLoading: { opacity: 0.7 },
   // QR preview
-  qrScroll: { padding: 24, alignItems: 'center' },
-  qrTitle: { fontSize: 24, fontWeight: '800', color: '#111', marginTop: 8 },
-  qrLocation: { fontSize: 14, color: '#666', marginTop: 4 },
+  qrScroll: { padding: spacing.xl, alignItems: 'center' },
+  qrTitle: {
+    ...typography.title1,
+    color: colors.text,
+    marginTop: spacing.sm,
+  },
+  qrLocation: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
   qrWrap: {
-    marginTop: 24,
-    padding: 16,
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.lg,
     shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
   },
   qrCodeText: {
-    marginTop: 16,
+    marginTop: spacing.lg,
     fontSize: 11,
-    color: '#999',
+    color: colors.textSubtle,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   qrHint: {
-    backgroundColor: '#EAF3DE',
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 20,
+    backgroundColor: colors.successBg,
+    borderWidth: 1,
+    borderColor: colors.successBgStrong,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.xl,
     alignSelf: 'stretch',
   },
-  qrHintText: { color: '#27500A', fontSize: 13, textAlign: 'center' },
+  qrHintText: {
+    ...typography.footnote,
+    color: colors.successText,
+    textAlign: 'center',
+  },
 });

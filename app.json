@@ -8,9 +8,9 @@
     "scheme": "stockr",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#1E5F3E"
+      "image": "./assets/login-hero.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#103927"
     },
     "ios": {
       "supportsTablet": false,

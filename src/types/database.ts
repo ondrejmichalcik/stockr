@@ -1,6 +1,7 @@
 // ============================================================================
 // Stockr – DB types + domain utilities
 // ============================================================================
+import { colors } from '@/src/theme';
 
 export type Role = 'owner' | 'member';
 
@@ -130,10 +131,10 @@ export interface ExpiryPalette {
 }
 
 export const EXPIRY_COLORS: Record<Exclude<ExpiryStatus, 'none'>, ExpiryPalette> = {
-  ok: { bg: '#EAF3DE', fg: '#27500A' },
-  soon: { bg: '#FAEEDA', fg: '#633806' },
-  critical: { bg: '#FCEBEB', fg: '#791F1F' },
-  expired: { bg: '#F7C1C1', fg: '#A32D2D' },
+  ok: { bg: colors.expiryOkBg, fg: colors.expiryOkText },
+  soon: { bg: colors.expirySoonBg, fg: colors.expirySoonText },
+  critical: { bg: colors.expiryCriticalBg, fg: colors.expiryCriticalText },
+  expired: { bg: colors.expiryExpiredBg, fg: colors.expiryExpiredText },
 };
 
 /**

@@ -27,6 +27,7 @@ import {
   formatExpiry,
   getExpiryStatus,
 } from '@/src/types/database';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -111,7 +112,7 @@ export default function DashboardScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.primary} />
       </SafeAreaView>
     );
   }
@@ -148,7 +149,13 @@ export default function DashboardScreen() {
         data={sortedBoxes}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.textMuted}
+          />
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyEmoji}>📦</Text>
@@ -191,7 +198,10 @@ export default function DashboardScreen() {
 
 function BoxCard({ box, onPress }: { box: Box; onPress: () => void }) {
   const status = getExpiryStatus(box.nearest_expiry);
-  const palette = status === 'none' ? { bg: '#EFEFEF', fg: '#666' } : EXPIRY_COLORS[status];
+  const palette =
+    status === 'none'
+      ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
+      : EXPIRY_COLORS[status];
 
   return (
     <Pressable onPress={onPress} style={styles.card}>
@@ -215,80 +225,128 @@ function BoxCard({ box, onPress }: { box: Box; onPress: () => void }) {
 
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F7' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 12,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
   },
   headerTitle: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#111',
+    ...typography.largeTitle,
+    color: colors.text,
     letterSpacing: -0.5,
   },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
-    backgroundColor: '#F5F5F7',
+    padding: spacing.xxl,
+    backgroundColor: colors.background,
   },
-  errorEmoji: { fontSize: 56, marginBottom: 16 },
-  errorTitle: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8 },
-  errorText: { color: '#666', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
-  retryBtn: { alignSelf: 'stretch', marginTop: 8 },
+  errorEmoji: { fontSize: 56, marginBottom: spacing.lg },
+  errorTitle: {
+    ...typography.title3,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  errorText: {
+    ...typography.subhead,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
+  retryBtn: { alignSelf: 'stretch', marginTop: spacing.sm },
   alertBanner: {
-    backgroundColor: '#FCEBEB',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    backgroundColor: colors.dangerBg,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.dangerBgStrong,
   },
-  alertText: { color: '#791F1F', fontWeight: '600' },
-  listContent: { padding: 16, paddingBottom: 24, gap: 12 },
+  alertText: {
+    ...typography.subhead,
+    color: colors.dangerText,
+    fontWeight: '600',
+  },
+  listContent: { padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
-    marginBottom: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.md,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: 8,
+    gap: spacing.sm,
   },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: '#111', flex: 1 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  badgeText: { fontSize: 12, fontWeight: '600' },
-  cardMeta: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  cardMetaText: { color: '#666', fontSize: 13 },
-  empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: 32 },
-  emptyEmoji: { fontSize: 64, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8 },
-  emptyText: { color: '#666', textAlign: 'center', marginBottom: 24 },
-  emptyBtn: { alignSelf: 'stretch', marginTop: 8 },
+  cardTitle: {
+    ...typography.headline,
+    color: colors.text,
+    flex: 1,
+  },
+  badge: {
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  badgeText: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
+  cardMeta: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm },
+  cardMetaText: {
+    ...typography.footnote,
+    color: colors.textMuted,
+  },
+  empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.xxl },
+  emptyEmoji: { fontSize: 64, marginBottom: spacing.lg },
+  emptyTitle: {
+    ...typography.title3,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  emptyText: {
+    ...typography.subhead,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
+  emptyBtn: { alignSelf: 'stretch', marginTop: spacing.sm },
   actions: {
     flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
   },
   btn: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
+    paddingVertical: spacing.md + 2,
+    borderRadius: radius.md,
     alignItems: 'center',
   },
-  btnPrimary: { backgroundColor: '#111' },
-  btnPrimaryText: { color: '#fff', fontWeight: '700' },
-  btnSecondary: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#E0E0E0' },
-  btnSecondaryText: { color: '#111', fontWeight: '600' },
-  signOut: { alignItems: 'center', paddingVertical: 12 },
-  signOutText: { color: '#999', fontSize: 13 },
+  btnPrimary: { backgroundColor: colors.primary },
+  btnPrimaryText: {
+    ...typography.bodyStrong,
+    color: colors.textOnPrimary,
+  },
+  btnSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  btnSecondaryText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  signOut: { alignItems: 'center', paddingVertical: spacing.md },
+  signOutText: {
+    ...typography.footnote,
+    color: colors.textSubtle,
+  },
 });

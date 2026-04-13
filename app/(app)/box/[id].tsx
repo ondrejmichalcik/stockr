@@ -43,6 +43,7 @@ import {
   formatExpiry,
   getExpiryStatus,
 } from '@/src/types/database';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export default function BoxDetailScreen() {
   const router = useRouter();
@@ -197,12 +198,14 @@ export default function BoxDetailScreen() {
   const nearest = useMemo(() => box?.nearest_expiry ?? null, [box]);
   const nearestStatus = getExpiryStatus(nearest);
   const nearestPalette =
-    nearestStatus === 'none' ? { bg: '#EFEFEF', fg: '#666' } : EXPIRY_COLORS[nearestStatus];
+    nearestStatus === 'none'
+      ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
+      : EXPIRY_COLORS[nearestStatus];
 
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.primary} />
       </SafeAreaView>
     );
   }
@@ -300,7 +303,13 @@ export default function BoxDetailScreen() {
         ItemSeparatorComponent={
           viewMode === 'list' ? () => <View style={styles.separator} /> : undefined
         }
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.textMuted}
+          />
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyEmoji}>📥</Text>
@@ -421,7 +430,7 @@ function LabelModalContent({ box, onClose }: { box: Box; onClose: () => void }) 
         {box.location ? <Text style={styles.labelLocation}>📍 {box.location}</Text> : null}
 
         <View style={styles.labelQrWrap}>
-          <QRCode value={box.qr_code} size={220} backgroundColor="#fff" />
+          <QRCode value={box.qr_code} size={220} backgroundColor="#FFFFFF" />
         </View>
 
         <Pressable
@@ -467,7 +476,9 @@ function SwipeableRow({
   registerOpen: (ref: Swipeable | null) => void;
 }) {
   const status = getExpiryStatus(item.expiry_date);
-  const palette = status === 'none' ? { bg: '#EFEFEF', fg: '#666' } : EXPIRY_COLORS[status];
+  const palette = status === 'none'
+      ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
+      : EXPIRY_COLORS[status];
   const emoji = item.category ? CATEGORY_EMOJI[item.category] : '📦';
   const swipeRef = useRef<Swipeable>(null);
 
@@ -534,7 +545,9 @@ function formatShortExpiry(dateStr: string): string {
 
 function GridCard({ item, onPress }: { item: Item; onPress: () => void }) {
   const status = getExpiryStatus(item.expiry_date);
-  const palette = status === 'none' ? { bg: '#EFEFEF', fg: '#666' } : EXPIRY_COLORS[status];
+  const palette = status === 'none'
+      ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
+      : EXPIRY_COLORS[status];
   const emoji = item.category ? CATEGORY_EMOJI[item.category] : '📦';
 
   return (
@@ -566,80 +579,118 @@ function GridCard({ item, onPress }: { item: Item; onPress: () => void }) {
 
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F7' },
+  container: { flex: 1, backgroundColor: colors.background },
   center: {
     flex: 1,
-    backgroundColor: '#F5F5F7',
+    backgroundColor: colors.background,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: spacing.xl,
   },
-  errorEmoji: { fontSize: 56, marginBottom: 16 },
-  errorTitle: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8 },
-  errorText: { color: '#666', textAlign: 'center', lineHeight: 20, marginBottom: 24 },
-  retryBtn: { alignSelf: 'stretch', marginTop: 8 },
-  btnSecondary: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#E0E0E0' },
-  btnSecondaryText: { color: '#111', fontWeight: '600', fontSize: 16 },
+  errorEmoji: { fontSize: 56, marginBottom: spacing.lg },
+  errorTitle: {
+    ...typography.title3,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  errorText: {
+    ...typography.subhead,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
+  retryBtn: { alignSelf: 'stretch', marginTop: spacing.sm },
+  btnSecondary: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  btnSecondaryText: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '600',
+  },
   header: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-    backgroundColor: '#fff',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+    backgroundColor: colors.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5E7',
+    borderBottomColor: colors.border,
   },
-  location: { color: '#666', fontSize: 13, marginBottom: 6 },
+  location: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    marginBottom: spacing.xs + 2,
+  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  count: { color: '#111', fontSize: 15, fontWeight: '600' },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  badgeText: { fontSize: 12, fontWeight: '600' },
+  count: {
+    ...typography.subhead,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  badge: {
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+  },
+  badgeText: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
 
   // Segmented control
   segmented: {
     flexDirection: 'row',
-    marginTop: 12,
-    backgroundColor: '#EFEFF2',
-    borderRadius: 10,
+    marginTop: spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: radius.md,
     padding: 2,
   },
   segment: {
     flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm + 2,
     alignItems: 'center',
   },
   segmentActive: {
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
+    backgroundColor: colors.surfaceElevated,
   },
-  segmentText: { fontSize: 13, color: '#666', fontWeight: '600' },
-  segmentTextActive: { color: '#111', fontWeight: '700' },
+  segmentText: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  segmentTextActive: {
+    color: colors.text,
+    fontWeight: '700',
+  },
 
   // List rows
-  listContent: { paddingBottom: 24 },
-  separator: { height: StyleSheet.hairlineWidth, backgroundColor: '#E5E5E7', marginLeft: 80 },
+  listContent: { paddingBottom: spacing.xl },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginLeft: 80,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    gap: 12,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.surface,
+    gap: spacing.md,
   },
-  rowPressed: { backgroundColor: '#F0F0F2' },
+  rowPressed: { backgroundColor: colors.surfaceElevated },
   rowImageWrap: {
     width: 52,
     height: 52,
-    borderRadius: 10,
-    backgroundColor: '#F5F5F7',
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
@@ -647,33 +698,46 @@ const styles = StyleSheet.create({
   rowImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   rowEmoji: { fontSize: 28 },
   rowBody: { flex: 1 },
-  rowName: { fontSize: 15, fontWeight: '600', color: '#111' },
-  rowQty: { fontSize: 13, color: '#666', marginTop: 2 },
+  rowName: {
+    ...typography.subhead,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  rowQty: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
   rowBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: spacing.sm + 2,
     paddingVertical: 5,
-    borderRadius: 999,
+    borderRadius: radius.full,
     maxWidth: 120,
   },
-  rowBadgeText: { fontSize: 11, fontWeight: '700' },
+  rowBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
 
   // Grid
-  gridContent: { padding: 8, paddingBottom: 24 },
-  gridRow: { gap: 8 },
+  gridContent: { padding: spacing.sm, paddingBottom: spacing.xl },
+  gridRow: { gap: spacing.sm },
   card: {
     flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 8,
-    marginBottom: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
     alignItems: 'center',
     minHeight: 150,
   },
   cardImageWrap: {
     width: '100%',
     aspectRatio: 1,
-    borderRadius: 8,
-    backgroundColor: '#F5F5F7',
+    borderRadius: radius.sm + 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 6,
@@ -681,97 +745,172 @@ const styles = StyleSheet.create({
   },
   cardImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   cardEmoji: { fontSize: 36 },
-  cardName: { fontSize: 12, fontWeight: '600', color: '#111', textAlign: 'center' },
-  cardQty: { fontSize: 11, color: '#666', marginTop: 2 },
+  cardName: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  cardQty: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
   cardBadge: {
     marginTop: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: radius.sm,
   },
-  cardBadgeText: { fontSize: 10, fontWeight: '700' },
+  cardBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
 
   // Swipe delete action
   deleteAction: {
-    backgroundColor: '#E23B3B',
+    backgroundColor: colors.danger,
     justifyContent: 'center',
     alignItems: 'center',
     width: 88,
   },
-  deleteActionText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  deleteActionText: {
+    ...typography.subhead,
+    color: colors.textOnDanger,
+    fontWeight: '700',
+  },
 
   // Empty
-  empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: 32 },
-  emptyEmoji: { fontSize: 64, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 8 },
-  emptyText: { color: '#666', textAlign: 'center' },
+  empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.xxl },
+  emptyEmoji: { fontSize: 64, marginBottom: spacing.lg },
+  emptyTitle: {
+    ...typography.title3,
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  emptyText: {
+    ...typography.subhead,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
 
   // Actions
-  actions: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
-  btn: { paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
-  btnPrimary: { backgroundColor: '#111' },
-  btnPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  btnDisabled: { backgroundColor: '#F0F0F0' },
-  btnDisabledText: { color: '#999', fontWeight: '600', fontSize: 16 },
+  actions: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  btn: {
+    paddingVertical: spacing.lg,
+    borderRadius: radius.md,
+    alignItems: 'center',
+  },
+  btnPrimary: { backgroundColor: colors.primary },
+  btnPrimaryText: {
+    ...typography.bodyStrong,
+    color: colors.textOnPrimary,
+  },
+  btnDisabled: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    opacity: 0.6,
+  },
+  btnDisabledText: {
+    ...typography.body,
+    color: colors.textSubtle,
+    fontWeight: '600',
+  },
 
   // Header button
-  headerBtn: { paddingHorizontal: 8, paddingVertical: 4 },
-  headerBtnText: { fontSize: 15, color: '#007AFF', fontWeight: '600' },
-  headerBtnMore: { fontSize: 26, color: '#007AFF', fontWeight: '700', lineHeight: 26 },
+  headerBtn: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
+  headerBtnText: {
+    ...typography.subhead,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  headerBtnMore: {
+    fontSize: 26,
+    color: colors.primary,
+    fontWeight: '700',
+    lineHeight: 26,
+  },
 
   // Label modal
-  modalContainer: { flex: 1, backgroundColor: '#F5F5F7' },
+  modalContainer: { flex: 1, backgroundColor: colors.background },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5E7',
-    backgroundColor: '#fff',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
   },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#111' },
-  modalClose: { fontSize: 16, color: '#007AFF', fontWeight: '600' },
-  modalBody: { flex: 1, padding: 24, alignItems: 'center' },
-  labelBoxName: { fontSize: 24, fontWeight: '800', color: '#111', marginTop: 8 },
-  labelLocation: { fontSize: 14, color: '#666', marginTop: 4 },
+  modalTitle: {
+    ...typography.headline,
+    color: colors.text,
+  },
+  modalClose: {
+    ...typography.callout,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  modalBody: { flex: 1, padding: spacing.xl, alignItems: 'center' },
+  labelBoxName: {
+    ...typography.title1,
+    color: colors.text,
+    marginTop: spacing.sm,
+  },
+  labelLocation: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
   labelQrWrap: {
-    marginTop: 24,
-    padding: 16,
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.lg,
     shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
   },
   labelCodeWrap: {
-    marginTop: 16,
+    marginTop: spacing.lg,
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.sm + 2,
   },
   labelCode: {
     fontSize: 11,
-    color: '#999',
+    color: colors.textSubtle,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     maxWidth: 280,
   },
   labelCopyHint: {
     marginTop: 6,
     fontSize: 12,
-    color: '#007AFF',
+    color: colors.primary,
     fontWeight: '600',
   },
-  labelCopyHintActive: { color: '#27500A' },
+  labelCopyHintActive: { color: colors.successText },
   labelHint: {
-    backgroundColor: '#EAF3DE',
-    borderRadius: 10,
-    padding: 12,
-    marginTop: 20,
+    backgroundColor: colors.successBg,
+    borderWidth: 1,
+    borderColor: colors.successBgStrong,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginTop: spacing.xl,
     alignSelf: 'stretch',
   },
-  labelHintText: { color: '#27500A', fontSize: 13, textAlign: 'center', lineHeight: 18 },
+  labelHintText: {
+    ...typography.footnote,
+    color: colors.successText,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
 });

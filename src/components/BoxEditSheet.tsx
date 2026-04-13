@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { updateBox } from '@/src/lib/supabase';
 import type { Box } from '@/src/types/database';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export interface BoxEditSheetProps {
   box: Box;
@@ -64,7 +65,7 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
         <Text style={styles.headerTitle}>Upravit bednu</Text>
         <Pressable hitSlop={12} onPress={handleSave} disabled={saving}>
           {saving ? (
-            <ActivityIndicator />
+            <ActivityIndicator color={colors.primary} />
           ) : (
             <Text style={[styles.headerBtn, styles.headerBtnPrimary]}>Uložit</Text>
           )}
@@ -81,7 +82,7 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
             value={name}
             onChangeText={setName}
             placeholder="Léky A"
-            placeholderTextColor="#B0B0B0"
+            placeholderTextColor={colors.textSubtle}
             style={styles.input}
             autoFocus
           />
@@ -91,7 +92,7 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
             value={location}
             onChangeText={setLocation}
             placeholder="Police 2, řada 1"
-            placeholderTextColor="#B0B0B0"
+            placeholderTextColor={colors.textSubtle}
             style={styles.input}
             returnKeyType="done"
             onSubmitEditing={handleSave}
@@ -103,38 +104,42 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F7' },
+  container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5E7',
-    backgroundColor: '#fff',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceElevated,
   },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#111' },
-  headerBtn: { fontSize: 16, color: '#007AFF', fontWeight: '500' },
+  headerTitle: {
+    ...typography.headline,
+    color: colors.text,
+  },
+  headerBtn: {
+    ...typography.callout,
+    color: colors.primary,
+    fontWeight: '500',
+  },
   headerBtnPrimary: { fontWeight: '700' },
-  scroll: { padding: 16, gap: 4 },
+  scroll: { padding: spacing.lg, gap: spacing.xs },
   label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#666',
-    marginTop: 14,
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    ...typography.label,
+    color: colors.textMuted,
+    marginTop: spacing.md + 2,
+    marginBottom: spacing.xs + 2,
   },
   input: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#111',
+    ...typography.body,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md + 2,
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.border,
   },
 });

@@ -5,6 +5,7 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  ImageBackground,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,6 +19,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ensureWarehouse, signInWithApple, supabase } from '@/src/lib/supabase';
+import { colors, radius, spacing, typography } from '@/src/theme';
 
 export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
@@ -98,142 +100,185 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
+    <ImageBackground
+      source={require('@/assets/login-hero.png')}
+      style={styles.container}
+      resizeMode="cover"
+    >
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={styles.hero}>
-            <Text style={styles.logo}>📦</Text>
-            <Text style={styles.title}>Stockr</Text>
-            <Text style={styles.subtitle}>Evidence nouzových zásob</Text>
-          </View>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Hero spacer — the crate lives in the background image, we just reserve room for it */}
+            <View style={styles.heroSpacer} />
 
-          <View style={styles.footer}>
-            <AppleAuthentication.AppleAuthenticationButton
-              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-              cornerRadius={12}
-              style={styles.appleBtn}
-              onPress={handleAppleSignIn}
-            />
-            {loading && <Text style={styles.loading}>Přihlašuji…</Text>}
+            <View style={styles.titleBlock}>
+              <Text style={styles.title}>Stockr</Text>
+              <Text style={styles.subtitle}>Evidence nouzových zásob</Text>
+            </View>
 
-            {__DEV__ && (
-              <View style={styles.devSection}>
-                <View style={styles.divider}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerText}>DEV ONLY</Text>
-                  <View style={styles.dividerLine} />
+            <View style={styles.footer}>
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
+                cornerRadius={radius.md}
+                style={styles.appleBtn}
+                onPress={handleAppleSignIn}
+              />
+              {loading && <Text style={styles.loading}>Přihlašuji…</Text>}
+
+              {__DEV__ && (
+                <View style={styles.devSection}>
+                  <View style={styles.divider}>
+                    <View style={styles.dividerLine} />
+                    <Text style={styles.dividerText}>DEV ONLY</Text>
+                    <View style={styles.dividerLine} />
+                  </View>
+
+                  <TextInput
+                    value={devEmail}
+                    onChangeText={setDevEmail}
+                    placeholder="test@stockr.local"
+                    placeholderTextColor={colors.heroTextSubtle}
+                    style={styles.input}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    textContentType="username"
+                  />
+                  <TextInput
+                    value={devPassword}
+                    onChangeText={setDevPassword}
+                    placeholder="heslo"
+                    placeholderTextColor={colors.heroTextSubtle}
+                    style={styles.input}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    textContentType="password"
+                    returnKeyType="go"
+                    onSubmitEditing={handleDevLogin}
+                  />
+                  <Pressable
+                    style={[styles.devBtn, devLoading && { opacity: 0.6 }]}
+                    onPress={handleDevLogin}
+                    disabled={devLoading}
+                  >
+                    {devLoading ? (
+                      <ActivityIndicator color={colors.heroTextMuted} />
+                    ) : (
+                      <Text style={styles.devBtnText}>Dev login (skip Apple)</Text>
+                    )}
+                  </Pressable>
                 </View>
-
-                <TextInput
-                  value={devEmail}
-                  onChangeText={setDevEmail}
-                  placeholder="test@stockr.local"
-                  placeholderTextColor="#B0B0B0"
-                  style={styles.input}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                  textContentType="username"
-                />
-                <TextInput
-                  value={devPassword}
-                  onChangeText={setDevPassword}
-                  placeholder="heslo"
-                  placeholderTextColor="#B0B0B0"
-                  style={styles.input}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  textContentType="password"
-                  returnKeyType="go"
-                  onSubmitEditing={handleDevLogin}
-                />
-                <Pressable
-                  style={[styles.devBtn, devLoading && { opacity: 0.6 }]}
-                  onPress={handleDevLogin}
-                  disabled={devLoading}
-                >
-                  {devLoading ? (
-                    <ActivityIndicator color="#666" />
-                  ) : (
-                    <Text style={styles.devBtnText}>Dev login (skip Apple)</Text>
-                  )}
-                </Pressable>
-              </View>
-            )}
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+              )}
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.heroBackground,
+  },
+  safeArea: {
+    flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
   },
-  hero: {
-    flex: 1,
-    justifyContent: 'center',
+  // Reserves vertical space for the crate in the background image.
+  // The image's crate sits roughly in the upper 40% — this spacer pushes
+  // everything else below it.
+  heroSpacer: {
+    height: '45%',
+    minHeight: 280,
+  },
+  titleBlock: {
     alignItems: 'center',
-    paddingTop: 60,
+    marginBottom: spacing.xl,
   },
-  logo: { fontSize: 72, marginBottom: 16 },
-  title: { fontSize: 40, fontWeight: '800', color: '#111' },
-  subtitle: { fontSize: 16, color: '#666', marginTop: 8 },
-  footer: { paddingBottom: 32, paddingTop: 16 },
-  appleBtn: { width: '100%', height: 52 },
-  loading: { textAlign: 'center', marginTop: 12, color: '#666' },
+  title: {
+    ...typography.largeTitle,
+    fontSize: 44,
+    lineHeight: 48,
+    color: colors.heroText,
+    letterSpacing: -0.5,
+  },
+  subtitle: {
+    ...typography.callout,
+    color: colors.heroTextMuted,
+    marginTop: spacing.xs,
+  },
+  footer: {
+    marginTop: 'auto',
+    paddingBottom: spacing.lg,
+    paddingTop: spacing.lg,
+  },
+  appleBtn: {
+    width: '100%',
+    height: 52,
+  },
+  loading: {
+    ...typography.footnote,
+    textAlign: 'center',
+    marginTop: spacing.md,
+    color: colors.heroTextMuted,
+  },
 
   // Dev section
-  devSection: { marginTop: 32 },
+  devSection: {
+    marginTop: spacing.xl,
+  },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   dividerLine: {
     flex: 1,
     height: StyleSheet.hairlineWidth,
-    backgroundColor: '#D0D0D0',
+    backgroundColor: colors.heroBorder,
   },
   dividerText: {
-    fontSize: 11,
-    color: '#999',
-    fontWeight: '700',
+    ...typography.caption2,
+    color: colors.heroTextSubtle,
     letterSpacing: 1.5,
-    marginHorizontal: 10,
+    marginHorizontal: spacing.sm,
   },
   input: {
-    backgroundColor: '#F5F5F7',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#111',
-    marginBottom: 8,
+    ...typography.subhead,
+    backgroundColor: colors.heroSurface,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    color: colors.heroText,
+    marginBottom: spacing.sm,
     borderWidth: 1,
-    borderColor: '#E5E5E7',
+    borderColor: colors.heroBorder,
   },
   devBtn: {
-    marginTop: 4,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: '#EFEFF2',
+    marginTop: spacing.xs,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.heroSurface,
+    borderWidth: 1,
+    borderColor: colors.heroBorder,
     alignItems: 'center',
   },
-  devBtnText: { color: '#444', fontWeight: '600', fontSize: 14 },
+  devBtnText: {
+    ...typography.footnote,
+    color: colors.heroTextMuted,
+    fontWeight: '600',
+  },
 });
