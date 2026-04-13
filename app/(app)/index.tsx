@@ -11,6 +11,8 @@ import {
   Text,
   View,
 } from 'react-native';
+import { ScreenBackground } from '@/src/components/ScreenBackground';
+import { Icon } from '@/src/components/Icon';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
@@ -48,7 +50,7 @@ export default function DashboardScreen() {
       const rows = await listBoxes(wh.id);
       setBoxes(rows);
     } catch (e: any) {
-      setError(e?.message ?? 'Nelze načíst sklad.');
+      setError(e?.message ?? 'Cannot load warehouse.');
       throw e;
     }
   }, []);
@@ -111,39 +113,48 @@ export default function DashboardScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.center}>
-        <ActivityIndicator color={colors.primary} />
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <ActivityIndicator color={colors.primary} />
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   // Error screen – jen pokud nemáme žádná cached data
   if (error && boxes.length === 0) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.errorEmoji}>⚠️</Text>
-        <Text style={styles.errorTitle}>Něco se pokazilo</Text>
-        <Text style={styles.errorText}>{error}</Text>
-        <Pressable style={[styles.btn, styles.btnPrimary, styles.retryBtn]} onPress={retry}>
-          <Text style={styles.btnPrimaryText}>Zkusit znovu</Text>
-        </Pressable>
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <Icon name="warning" size={96} style={styles.errorIcon} />
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable style={[styles.btn, styles.btnPrimary, styles.retryBtn]} onPress={retry}>
+            <View style={styles.btnContent}>
+              <Icon name="retry" size={18} />
+              <Text style={styles.btnPrimaryText}>Try again</Text>
+            </View>
+          </Pressable>
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Stockr</Text>
-      </View>
-
-      {criticalCount > 0 && (
-        <View style={styles.alertBanner}>
-          <Text style={styles.alertText}>
-            ⚠️ {criticalCount} {criticalCount === 1 ? 'bedna má' : 'beden má'} kritickou expiraci
-          </Text>
+    <ScreenBackground>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Stockr</Text>
         </View>
-      )}
+
+        {criticalCount > 0 && (
+          <View style={styles.alertBanner}>
+            <Icon name="warning" size={20} />
+            <Text style={styles.alertText}>
+              {criticalCount} {criticalCount === 1 ? 'box has' : 'boxes have'} critical expiry
+            </Text>
+          </View>
+        )}
 
       <FlatList
         data={sortedBoxes}
@@ -158,37 +169,47 @@ export default function DashboardScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyEmoji}>📦</Text>
-            <Text style={styles.emptyTitle}>Zatím žádné bedny</Text>
+            <Icon name="box-generic" size={96} style={styles.emptyIcon} />
+            <Text style={styles.emptyTitle}>No boxes yet</Text>
             <Text style={styles.emptyText}>
-              Vytvoř první bednu a přilep si na ni QR štítek.
+              Create your first box and stick a QR label on it.
             </Text>
             <Pressable
               style={[styles.btn, styles.btnPrimary, styles.emptyBtn]}
               onPress={() => router.push('/box/new' as any)}
             >
-              <Text style={styles.btnPrimaryText}>+ Vytvořit první bednu</Text>
+              <View style={styles.btnContent}>
+                <Icon name="plus" size={18} />
+                <Text style={styles.btnPrimaryText}>Create first box</Text>
+              </View>
             </Pressable>
           </View>
         }
         renderItem={({ item }) => <BoxCard box={item} onPress={() => router.push(`/box/${item.id}` as any)} />}
       />
 
-      {/* Tlačítka – Skenovat + Nová bedna */}
+      {/* Scan + new box actions */}
       <View style={styles.actions}>
         <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => router.push('/scan' as any)}>
-          <Text style={styles.btnSecondaryText}>📷 Skenovat QR</Text>
+          <View style={styles.btnContent}>
+            <Icon name="scan-qr" size={18} />
+            <Text style={styles.btnSecondaryText}>Scan QR</Text>
+          </View>
         </Pressable>
         <Pressable style={[styles.btn, styles.btnPrimary]} onPress={() => router.push('/box/new' as any)}>
-          <Text style={styles.btnPrimaryText}>+ Nová bedna</Text>
+          <View style={styles.btnContent}>
+            <Icon name="plus" size={18} />
+            <Text style={styles.btnPrimaryText}>New box</Text>
+          </View>
         </Pressable>
       </View>
 
-      {/* Dočasné odhlášení – přesune se do settings v dalším sprintu */}
-      <Pressable onPress={() => signOut()} style={styles.signOut}>
-        <Text style={styles.signOutText}>Odhlásit</Text>
-      </Pressable>
-    </SafeAreaView>
+        {/* Temporary sign-out button — moves to settings in a later sprint */}
+        <Pressable onPress={() => signOut()} style={styles.signOut}>
+          <Text style={styles.signOutText}>Sign out</Text>
+        </Pressable>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
@@ -214,9 +235,14 @@ function BoxCard({ box, onPress }: { box: Box; onPress: () => void }) {
         </View>
       </View>
       <View style={styles.cardMeta}>
-        {box.location ? <Text style={styles.cardMetaText}>📍 {box.location}</Text> : null}
+        {box.location ? (
+          <View style={styles.cardMetaItem}>
+            <Icon name="pin" size={14} />
+            <Text style={styles.cardMetaText}>{box.location}</Text>
+          </View>
+        ) : null}
         <Text style={styles.cardMetaText}>
-          {box.item_count} {box.item_count === 1 ? 'položka' : box.item_count < 5 ? 'položky' : 'položek'}
+          {box.item_count} {box.item_count === 1 ? 'item' : 'items'}
         </Text>
       </View>
     </Pressable>
@@ -225,11 +251,12 @@ function BoxCard({ box, onPress }: { box: Box; onPress: () => void }) {
 
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
+    backgroundColor: 'transparent',
   },
   headerTitle: {
     ...typography.largeTitle,
@@ -241,9 +268,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.xxl,
-    backgroundColor: colors.background,
+    backgroundColor: 'transparent',
   },
-  errorEmoji: { fontSize: 56, marginBottom: spacing.lg },
+  errorIcon: { marginBottom: spacing.lg },
   errorTitle: {
     ...typography.title3,
     color: colors.text,
@@ -257,6 +284,9 @@ const styles = StyleSheet.create({
   },
   retryBtn: { alignSelf: 'stretch', marginTop: spacing.sm },
   alertBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     backgroundColor: colors.dangerBg,
     paddingVertical: spacing.sm + 2,
     paddingHorizontal: spacing.lg,
@@ -267,6 +297,7 @@ const styles = StyleSheet.create({
     ...typography.subhead,
     color: colors.dangerText,
     fontWeight: '600',
+    flex: 1,
   },
   listContent: { padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md },
   card: {
@@ -297,13 +328,23 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '600',
   },
-  cardMeta: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm },
+  cardMeta: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+    alignItems: 'center',
+  },
+  cardMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   cardMetaText: {
     ...typography.footnote,
     color: colors.textMuted,
   },
   empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.xxl },
-  emptyEmoji: { fontSize: 64, marginBottom: spacing.lg },
+  emptyIcon: { marginBottom: spacing.lg },
   emptyTitle: {
     ...typography.title3,
     color: colors.text,
@@ -328,6 +369,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md + 2,
     borderRadius: radius.md,
     alignItems: 'center',
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   btnPrimary: { backgroundColor: colors.primary },
   btnPrimaryText: {

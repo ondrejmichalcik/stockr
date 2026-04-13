@@ -1,6 +1,6 @@
 // ============================================================================
-// Stockr – Detail bedny
-// List layout se swipe-to-delete, realtime subscription, FAB +Naskladnit
+// Stockr – Box detail
+// List layout with swipe-to-delete, realtime subscription, "Add items" FAB
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -26,6 +26,8 @@ import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { ItemEditSheet } from '@/src/components/ItemEditSheet';
 import { BoxEditSheet } from '@/src/components/BoxEditSheet';
+import { ScreenBackground } from '@/src/components/ScreenBackground';
+import { Icon, type IconName } from '@/src/components/Icon';
 
 type ViewMode = 'list' | 'grid';
 const VIEW_MODE_KEY = 'stockr:boxViewMode';
@@ -38,7 +40,7 @@ import {
 } from '@/src/lib/supabase';
 import type { Box, Item } from '@/src/types/database';
 import {
-  CATEGORY_EMOJI,
+  CATEGORY_ICON,
   EXPIRY_COLORS,
   formatExpiry,
   getExpiryStatus,
@@ -82,7 +84,7 @@ export default function BoxDetailScreen() {
       setBox(b);
       setItems(is);
     } catch (e: any) {
-      setError(e?.message ?? 'Nelze načíst bednu.');
+      setError(e?.message ?? 'Cannot load box.');
       throw e;
     }
   }, [id]);
@@ -134,19 +136,19 @@ export default function BoxDetailScreen() {
   const handleDeleteBox = () => {
     if (!box) return;
     Alert.alert(
-      'Smazat bednu',
-      `Opravdu smazat „${box.name}"? Všechny položky v této bedně se smažou spolu s ní.`,
+      'Delete box',
+      `Really delete "${box.name}"? All items in this box will be deleted with it.`,
       [
-        { text: 'Zrušit', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Smazat',
+          text: 'Delete',
           style: 'destructive',
           onPress: async () => {
             try {
               await deleteBox(box.id);
               router.replace('/');
             } catch (e: any) {
-              Alert.alert('Chyba', e?.message ?? 'Nelze smazat.');
+              Alert.alert('Error', e?.message ?? 'Cannot delete.');
             }
           },
         },
@@ -155,7 +157,7 @@ export default function BoxDetailScreen() {
   };
 
   const showBoxActionSheet = () => {
-    const options = ['🏷 Zobrazit QR štítek', '✏️ Upravit bednu', '🗑 Smazat bednu', 'Zrušit'];
+    const options = ['Show QR label', 'Edit box', 'Delete box', 'Cancel'];
     ActionSheetIOS.showActionSheetWithOptions(
       {
         options,
@@ -172,23 +174,24 @@ export default function BoxDetailScreen() {
   };
 
   const confirmDelete = (item: Item, close: () => void) => {
-    Alert.alert('Smazat položku', `Opravdu smazat „${item.name}"?`, [
+    Alert.alert('Delete item', `Really delete "${item.name}"?`, [
       {
-        text: 'Zrušit',
+        text: 'Cancel',
         style: 'cancel',
         onPress: close,
       },
       {
-        text: 'Smazat',
+        text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           close();
           try {
             await deleteItem(item.id);
-            // Realtime sub refreshne listu, ale pro responzivní UX ji refreshnem lokálně
+            // The realtime sub will refresh eventually, but for snappy UX
+            // we also remove it locally.
             setItems((prev) => prev.filter((x) => x.id !== item.id));
           } catch (e: any) {
-            Alert.alert('Chyba', e?.message ?? 'Nelze smazat.');
+            Alert.alert('Error', e?.message ?? 'Cannot delete.');
           }
         },
       },
@@ -204,65 +207,86 @@ export default function BoxDetailScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.center}>
-        <ActivityIndicator color={colors.primary} />
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <ActivityIndicator color={colors.primary} />
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   if (error && !box) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.errorEmoji}>⚠️</Text>
-        <Text style={styles.errorTitle}>Něco se pokazilo</Text>
-        <Text style={styles.errorText}>{error}</Text>
-        <Pressable style={[styles.btn, styles.btnPrimary, styles.retryBtn]} onPress={retry}>
-          <Text style={styles.btnPrimaryText}>Zkusit znovu</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.btn, styles.btnSecondary, styles.retryBtn]}
-          onPress={() => router.replace('/')}
-        >
-          <Text style={styles.btnSecondaryText}>Zpět na dashboard</Text>
-        </Pressable>
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <Icon name="warning" size={96} style={styles.errorIcon} />
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorText}>{error}</Text>
+          <Pressable style={[styles.btn, styles.btnPrimary, styles.retryBtn]} onPress={retry}>
+            <View style={styles.btnContent}>
+              <Icon name="retry" size={18} />
+              <Text style={styles.btnPrimaryText}>Try again</Text>
+            </View>
+          </Pressable>
+          <Pressable
+            style={[styles.btn, styles.btnSecondary, styles.retryBtn]}
+            onPress={() => router.replace('/')}
+          >
+            <Text style={styles.btnSecondaryText}>Back to dashboard</Text>
+          </Pressable>
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   if (!box) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.errorTitle}>Bedna nenalezena</Text>
-        <Pressable style={[styles.btn, styles.btnPrimary, styles.retryBtn]} onPress={() => router.replace('/')}>
-          <Text style={styles.btnPrimaryText}>Zpět na dashboard</Text>
-        </Pressable>
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <Text style={styles.errorTitle}>Box not found</Text>
+          <Pressable style={[styles.btn, styles.btnPrimary, styles.retryBtn]} onPress={() => router.replace('/')}>
+            <Text style={styles.btnPrimaryText}>Back to dashboard</Text>
+          </Pressable>
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['bottom']}>
-      <Stack.Screen
-        options={{
-          title: box.name,
-          headerRight: () => (
-            <Pressable
-              hitSlop={12}
-              onPress={showBoxActionSheet}
-              style={({ pressed }) => [styles.headerBtn, pressed && { opacity: 0.5 }]}
-            >
-              <Text style={styles.headerBtnMore}>⋯</Text>
-            </Pressable>
-          ),
-        }}
-      />
+    <ScreenBackground>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        {/* Top nav bar */}
+        <View style={styles.topBar}>
+          <Pressable
+            hitSlop={12}
+            onPress={() => router.back()}
+            style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.5 }]}
+          >
+            <Icon name="chevron-left" size={28} />
+          </Pressable>
+          <Text style={styles.topBarTitle} numberOfLines={1}>
+            {box.name}
+          </Text>
+          <Pressable
+            hitSlop={12}
+            onPress={showBoxActionSheet}
+            style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.5 }]}
+          >
+            <Icon name="more" size={24} />
+          </Pressable>
+        </View>
 
-      {/* Header */}
-      <View style={styles.header}>
-        {box.location ? <Text style={styles.location}>📍 {box.location}</Text> : null}
+        {/* Header */}
+        <View style={styles.header}>
+        {box.location ? (
+          <View style={styles.locationRow}>
+            <Icon name="pin" size={14} />
+            <Text style={styles.location}>{box.location}</Text>
+          </View>
+        ) : null}
         <View style={styles.headerRow}>
           <Text style={styles.count}>
-            {box.item_count} {box.item_count === 1 ? 'položka' : box.item_count < 5 ? 'položky' : 'položek'}
+            {box.item_count} {box.item_count === 1 ? 'item' : 'items'}
           </Text>
           <View style={[styles.badge, { backgroundColor: nearestPalette.bg }]}>
             <Text style={[styles.badgeText, { color: nearestPalette.fg }]}>
@@ -277,17 +301,23 @@ export default function BoxDetailScreen() {
             onPress={viewMode === 'grid' ? toggleViewMode : undefined}
             style={[styles.segment, viewMode === 'list' && styles.segmentActive]}
           >
-            <Text style={[styles.segmentText, viewMode === 'list' && styles.segmentTextActive]}>
-              ☰ Seznam
-            </Text>
+            <View style={styles.segmentContent}>
+              <Icon name="list" size={14} />
+              <Text style={[styles.segmentText, viewMode === 'list' && styles.segmentTextActive]}>
+                List
+              </Text>
+            </View>
           </Pressable>
           <Pressable
             onPress={viewMode === 'list' ? toggleViewMode : undefined}
             style={[styles.segment, viewMode === 'grid' && styles.segmentActive]}
           >
-            <Text style={[styles.segmentText, viewMode === 'grid' && styles.segmentTextActive]}>
-              ▦ Mřížka
-            </Text>
+            <View style={styles.segmentContent}>
+              <Icon name="grid" size={14} />
+              <Text style={[styles.segmentText, viewMode === 'grid' && styles.segmentTextActive]}>
+                Grid
+              </Text>
+            </View>
           </Pressable>
         </View>
       </View>
@@ -312,9 +342,9 @@ export default function BoxDetailScreen() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyEmoji}>📥</Text>
-            <Text style={styles.emptyTitle}>Bedna je prázdná</Text>
-            <Text style={styles.emptyText}>Naskladni první položky.</Text>
+            <Icon name="inbox" size={96} style={styles.emptyIcon} />
+            <Text style={styles.emptyTitle}>Box is empty</Text>
+            <Text style={styles.emptyText}>Add your first items.</Text>
           </View>
         }
         renderItem={({ item }) =>
@@ -341,7 +371,10 @@ export default function BoxDetailScreen() {
           style={[styles.btn, styles.btnPrimary]}
           onPress={() => router.push(`/box/${box.id}/add-items` as any)}
         >
-          <Text style={styles.btnPrimaryText}>+ Naskladnit</Text>
+          <View style={styles.btnContent}>
+            <Icon name="plus" size={18} />
+            <Text style={styles.btnPrimaryText}>Add items</Text>
+          </View>
         </Pressable>
       </View>
 
@@ -394,7 +427,8 @@ export default function BoxDetailScreen() {
           />
         )}
       </Modal>
-    </SafeAreaView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
@@ -412,22 +446,28 @@ function LabelModalContent({ box, onClose }: { box: Box; onClose: () => void }) 
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Noop – Clipboard selhání je nekritické
+      // Noop — clipboard failures are non-critical
     }
   };
 
   return (
-    <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom']}>
-      <View style={styles.modalHeader}>
-        <Text style={styles.modalTitle}>QR štítek</Text>
+    <ScreenBackground>
+      <SafeAreaView style={styles.modalContainer} edges={['top', 'bottom']}>
+        <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>QR label</Text>
         <Pressable hitSlop={12} onPress={onClose}>
-          <Text style={styles.modalClose}>Zavřít</Text>
+          <Text style={styles.modalClose}>Close</Text>
         </Pressable>
       </View>
 
       <View style={styles.modalBody}>
         <Text style={styles.labelBoxName}>{box.name}</Text>
-        {box.location ? <Text style={styles.labelLocation}>📍 {box.location}</Text> : null}
+        {box.location ? (
+          <View style={styles.locationRow}>
+            <Icon name="pin" size={14} />
+            <Text style={styles.labelLocation}>{box.location}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.labelQrWrap}>
           <QRCode value={box.qr_code} size={220} backgroundColor="#FFFFFF" />
@@ -440,23 +480,30 @@ function LabelModalContent({ box, onClose }: { box: Box; onClose: () => void }) 
           <Text style={styles.labelCode} numberOfLines={1}>
             {box.qr_code}
           </Text>
-          <Text style={[styles.labelCopyHint, copied && styles.labelCopyHintActive]}>
-            {copied ? '✓ Zkopírováno' : '📋 Kopírovat'}
-          </Text>
+          <View style={styles.labelCopyRow}>
+            <Icon name={copied ? 'check' : 'copy'} size={14} />
+            <Text style={[styles.labelCopyHint, copied && styles.labelCopyHintActive]}>
+              {copied ? 'Copied' : 'Copy'}
+            </Text>
+          </View>
         </Pressable>
 
         <View style={styles.labelHint}>
           <Text style={styles.labelHintText}>
-            Tento QR zůstává stejný po celou dobu existence bedny. Přilep ho zvenku a při skenování appka
-            okamžitě otevře detail.
+            This QR stays the same for the box's entire lifetime. Stick it on the outside —
+            scanning it opens the box detail instantly.
           </Text>
         </View>
 
         <Pressable style={[styles.btn, styles.btnDisabled]} disabled>
-          <Text style={styles.btnDisabledText}>🖨 Tisknout na Niimbot (Sprint 3)</Text>
+          <View style={styles.btnContent}>
+            <Icon name="printer" size={18} />
+            <Text style={styles.btnDisabledText}>Print (Sprint 3)</Text>
+          </View>
         </Pressable>
       </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
@@ -479,7 +526,7 @@ function SwipeableRow({
   const palette = status === 'none'
       ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
       : EXPIRY_COLORS[status];
-  const emoji = item.category ? CATEGORY_EMOJI[item.category] : '📦';
+  const iconName = (item.category ? CATEGORY_ICON[item.category] : 'box-generic') as IconName;
   const swipeRef = useRef<Swipeable>(null);
 
   const renderRightActions = () => (
@@ -507,7 +554,7 @@ function SwipeableRow({
           {item.image_url ? (
             <Image source={{ uri: item.image_url }} style={styles.rowImage} />
           ) : (
-            <Text style={styles.rowEmoji}>{emoji}</Text>
+            <Icon name={iconName} size={38} />
           )}
         </View>
         <View style={styles.rowBody}>
@@ -548,7 +595,7 @@ function GridCard({ item, onPress }: { item: Item; onPress: () => void }) {
   const palette = status === 'none'
       ? { bg: colors.expiryNoneBg, fg: colors.expiryNoneText }
       : EXPIRY_COLORS[status];
-  const emoji = item.category ? CATEGORY_EMOJI[item.category] : '📦';
+  const iconName = (item.category ? CATEGORY_ICON[item.category] : 'box-generic') as IconName;
 
   return (
     <Pressable
@@ -559,7 +606,7 @@ function GridCard({ item, onPress }: { item: Item; onPress: () => void }) {
         {item.image_url ? (
           <Image source={{ uri: item.image_url }} style={styles.cardImage} />
         ) : (
-          <Text style={styles.cardEmoji}>{emoji}</Text>
+          <Icon name={iconName} size={56} />
         )}
       </View>
       <Text numberOfLines={2} style={styles.cardName}>
@@ -579,15 +626,15 @@ function GridCard({ item, onPress }: { item: Item; onPress: () => void }) {
 
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   center: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.xl,
   },
-  errorEmoji: { fontSize: 56, marginBottom: spacing.lg },
+  errorIcon: { marginBottom: spacing.lg },
   errorTitle: {
     ...typography.title3,
     color: colors.text,
@@ -610,18 +657,42 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '600',
   },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  topBarBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarTitle: {
+    ...typography.headline,
+    color: colors.text,
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: spacing.sm,
+  },
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: 'transparent',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.xs + 2,
   },
   location: {
     ...typography.footnote,
     color: colors.textMuted,
-    marginBottom: spacing.xs + 2,
   },
   headerRow: {
     flexDirection: 'row',
@@ -656,6 +727,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: radius.sm + 2,
     alignItems: 'center',
+  },
+  segmentContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
   },
   segmentActive: {
     backgroundColor: colors.surfaceElevated,
@@ -696,7 +772,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   rowImage: { width: '100%', height: '100%', resizeMode: 'contain' },
-  rowEmoji: { fontSize: 28 },
   rowBody: { flex: 1 },
   rowName: {
     ...typography.subhead,
@@ -744,7 +819,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardImage: { width: '100%', height: '100%', resizeMode: 'contain' },
-  cardEmoji: { fontSize: 36 },
   cardName: {
     ...typography.caption,
     color: colors.text,
@@ -782,7 +856,7 @@ const styles = StyleSheet.create({
 
   // Empty
   empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: spacing.xxl },
-  emptyEmoji: { fontSize: 64, marginBottom: spacing.lg },
+  emptyIcon: { marginBottom: spacing.lg },
   emptyTitle: {
     ...typography.title3,
     color: colors.text,
@@ -804,6 +878,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.lg,
     borderRadius: radius.md,
     alignItems: 'center',
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   btnPrimary: { backgroundColor: colors.primary },
   btnPrimaryText: {
@@ -837,7 +916,7 @@ const styles = StyleSheet.create({
   },
 
   // Label modal
-  modalContainer: { flex: 1, backgroundColor: colors.background },
+  modalContainer: { flex: 1, backgroundColor: 'transparent' },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -846,7 +925,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: 'transparent',
   },
   modalTitle: {
     ...typography.headline,
@@ -891,8 +970,13 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     maxWidth: 280,
   },
-  labelCopyHint: {
+  labelCopyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
     marginTop: 6,
+  },
+  labelCopyHint: {
     fontSize: 12,
     color: colors.primary,
     fontWeight: '600',

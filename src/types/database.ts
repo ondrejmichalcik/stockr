@@ -5,40 +5,42 @@ import { colors } from '@/src/theme';
 
 export type Role = 'owner' | 'member';
 
-export type Unit = 'ks' | 'g' | 'kg' | 'ml' | 'l' | 'bal';
+export type Unit = 'pcs' | 'g' | 'kg' | 'ml' | 'l' | 'pack';
 
-export const UNITS: Unit[] = ['ks', 'g', 'kg', 'ml', 'l', 'bal'];
+export const UNITS: Unit[] = ['pcs', 'g', 'kg', 'ml', 'l', 'pack'];
 
 export type Category =
-  | 'potraviny'
-  | 'léky'
-  | 'voda'
-  | 'dezinfekce'
-  | 'vybavení'
-  | 'energie'
-  | 'dokumenty'
-  | 'ostatní';
+  | 'food'
+  | 'medicine'
+  | 'water'
+  | 'disinfectant'
+  | 'equipment'
+  | 'energy'
+  | 'documents'
+  | 'other';
 
 export const CATEGORIES: Category[] = [
-  'potraviny',
-  'léky',
-  'voda',
-  'dezinfekce',
-  'vybavení',
-  'energie',
-  'dokumenty',
-  'ostatní',
+  'food',
+  'medicine',
+  'water',
+  'disinfectant',
+  'equipment',
+  'energy',
+  'documents',
+  'other',
 ];
 
-export const CATEGORY_EMOJI: Record<Category, string> = {
-  potraviny: '🥫',
-  léky: '💊',
-  voda: '💧',
-  dezinfekce: '🧴',
-  vybavení: '🔧',
-  energie: '🔋',
-  dokumenty: '📄',
-  ostatní: '📦',
+// Maps domain categories to the custom icon names rendered via <Icon>.
+// Keep in sync with src/components/Icon.tsx IconName union.
+export const CATEGORY_ICON: Record<Category, string> = {
+  food: 'food-can',
+  medicine: 'medicine-pill',
+  water: 'water-drop',
+  disinfectant: 'disinfectant-bottle',
+  equipment: 'tool-wrench',
+  energy: 'battery',
+  documents: 'document',
+  other: 'box-generic',
 };
 
 // ----------------------------------------------------------------------------
@@ -138,7 +140,7 @@ export const EXPIRY_COLORS: Record<Exclude<ExpiryStatus, 'none'>, ExpiryPalette>
 };
 
 /**
- * Rozdíl ve dnech mezi `dateStr` (ISO YYYY-MM-DD) a dneškem. Kladné → v budoucnu.
+ * Days between `dateStr` (ISO YYYY-MM-DD) and today. Positive = future.
  */
 export function daysUntil(dateStr: string): number {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -160,9 +162,9 @@ export function getExpiryStatus(dateStr: string | null): ExpiryStatus {
 }
 
 /**
- * Převede ISO YYYY-MM-DD na český formát "15. 3. 2027".
+ * Format ISO YYYY-MM-DD to "15. 3. 2027" (DD. M. YYYY).
  */
-export function formatDateCs(dateStr: string | null): string {
+export function formatDate(dateStr: string | null): string {
   if (!dateStr) return '';
   const [y, m, d] = dateStr.split('-').map(Number);
   if (!y || !m || !d) return dateStr;
@@ -170,7 +172,7 @@ export function formatDateCs(dateStr: string | null): string {
 }
 
 /**
- * Převede JS Date na ISO YYYY-MM-DD (local timezone, ne UTC).
+ * Convert JS Date to ISO YYYY-MM-DD (local timezone, not UTC).
  */
 export function toIsoDate(date: Date): string {
   const y = date.getFullYear();
@@ -180,7 +182,7 @@ export function toIsoDate(date: Date): string {
 }
 
 /**
- * Převede ISO YYYY-MM-DD na JS Date v local timezone.
+ * Convert ISO YYYY-MM-DD to a local-timezone JS Date.
  */
 export function fromIsoDate(dateStr: string): Date | null {
   if (!dateStr) return null;
@@ -190,20 +192,20 @@ export function fromIsoDate(dateStr: string): Date | null {
 }
 
 export function formatExpiry(dateStr: string | null): string {
-  if (!dateStr) return 'Bez data';
+  if (!dateStr) return 'No date';
   const days = daysUntil(dateStr);
-  if (days < -1) return `Prošlo před ${Math.abs(days)} dny`;
-  if (days === -1) return 'Prošlo včera';
-  if (days === 0) return 'Expiruje dnes';
-  if (days === 1) return 'Expiruje zítra';
-  if (days <= 30) return `Expiruje za ${days} dní`;
-  if (days <= 365) return `Expiruje za ${Math.round(days / 30)} měs.`;
-  return `Expiruje za ${Math.round(days / 365)} r.`;
+  if (days < -1) return `Expired ${Math.abs(days)} days ago`;
+  if (days === -1) return 'Expired yesterday';
+  if (days === 0) return 'Expires today';
+  if (days === 1) return 'Expires tomorrow';
+  if (days <= 30) return `Expires in ${days} days`;
+  if (days <= 365) return `Expires in ${Math.round(days / 30)} mo`;
+  return `Expires in ${Math.round(days / 365)} yr`;
 }
 
 /**
- * Compare function pro řazení beden: expired → critical → soon → ok → none.
- * Uvnitř stejné kategorie: nejbližší expirace první.
+ * Compare function for sorting boxes: expired → critical → soon → ok → none.
+ * Within the same category: nearest expiry first.
  */
 const STATUS_ORDER: Record<ExpiryStatus, number> = {
   expired: 0,

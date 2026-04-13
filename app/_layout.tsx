@@ -60,17 +60,17 @@ export default function RootLayout() {
 
       const s = (await supabase.auth.getSession()).data.session;
       if (!s) {
-        // Pokud nejsme přihlášeni, schovat do pendingInviteToken by šlo přes SecureStore.
-        // Zatím jen upozorníme.
-        Alert.alert('Pozvánka', 'Přihlaste se a otevřete odkaz znovu.');
+        // If we're not signed in, we could stash the token in SecureStore and
+        // apply it after login. For now just warn the user.
+        Alert.alert('Invitation', 'Please sign in and open the link again.');
         return;
       }
       try {
         await acceptInvitation(token, s.user.id);
-        Alert.alert('Hotovo', 'Pozvánka přijata. Vítej ve sdíleném skladu!');
+        Alert.alert('Done', 'Invitation accepted. Welcome to the shared warehouse!');
         router.replace('/(app)');
       } catch (e: any) {
-        Alert.alert('Chyba pozvánky', e?.message ?? 'Neznámá chyba');
+        Alert.alert('Invitation error', e?.message ?? 'Unknown error');
       }
     };
 

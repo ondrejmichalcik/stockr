@@ -1,5 +1,5 @@
 // ============================================================================
-// Stockr – Naskladňovací batch session
+// Stockr – Add items (batch session)
 // Flow: EAN scan → OFF lookup → form → queue → save all
 // ============================================================================
 import { useEffect, useRef, useState } from 'react';
@@ -19,7 +19,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
@@ -33,10 +33,10 @@ import {
 import { lookupByBarcode } from '@/src/lib/openFoodFacts';
 import {
   CATEGORIES,
-  CATEGORY_EMOJI,
+  CATEGORY_ICON,
   EXPIRY_COLORS,
   UNITS,
-  formatDateCs,
+  formatDate,
   formatExpiry,
   fromIsoDate,
   getExpiryStatus,
@@ -44,6 +44,8 @@ import {
 } from '@/src/types/database';
 import type { Category, Unit } from '@/src/types/database';
 import { colors, radius, spacing, typography } from '@/src/theme';
+import { ScreenBackground } from '@/src/components/ScreenBackground';
+import { Icon, type IconName } from '@/src/components/Icon';
 
 // ---------------------------------------------------------------------------
 // Queue item – local state before batch save
@@ -69,20 +71,20 @@ export default function AddItemsScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [mode, setMode] = useState<Mode>('scan');
 
-  // Forma pro aktuálně skenovaný produkt
+  // Form for the product currently being scanned
   const [draft, setDraft] = useState<Partial<Draft> | null>(null);
   const [draftSource, setDraftSource] = useState<DraftSource>(null);
   const [looking, setLooking] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
-  // Fronta položek čekajících na batch save
+  // Queue of items waiting for the batch save
   const [queue, setQueue] = useState<Draft[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Svítilna (torch)
+  // Torch toggle
   const [torch, setTorch] = useState(false);
 
-  // Toast po přidání do fronty
+  // Toast shown after an item is added to the queue
   const [toast, setToast] = useState<string | null>(null);
   const toastOpacity = useRef(new Animated.Value(0)).current;
 
@@ -110,19 +112,19 @@ export default function AddItemsScreen() {
     lastBarcodeRef.current = barcode;
     setLooking(true);
     try {
-      // 1. Lokální custom_products
+      // 1. Local custom_products lookup
       const { data: sess } = await supabase.auth.getSession();
       const userId = sess.session?.user.id;
-      if (!userId) throw new Error('Nejsi přihlášen.');
+      if (!userId) throw new Error('Not signed in.');
       const wh = await getMyWarehouse(userId);
-      if (!wh) throw new Error('Chybí sklad.');
+      if (!wh) throw new Error('No warehouse.');
 
       const custom = await findCustomProduct(wh.id, barcode);
       if (custom) {
         setDraft({
           name: custom.name,
           quantity: 1,
-          unit: 'ks',
+          unit: 'pcs',
           expiry_date: '',
           barcode,
           image_url: custom.image_url,
@@ -140,7 +142,7 @@ export default function AddItemsScreen() {
         setDraft({
           name: off.name,
           quantity: 1,
-          unit: 'ks',
+          unit: 'pcs',
           expiry_date: '',
           barcode,
           image_url: off.image_url,
@@ -152,11 +154,11 @@ export default function AddItemsScreen() {
         return;
       }
 
-      // 3. Fallback – ruční zadání (OFF 404)
+      // 3. Fallback — manual entry (OFF 404)
       setDraft({
         name: '',
         quantity: 1,
-        unit: 'ks',
+        unit: 'pcs',
         expiry_date: '',
         barcode,
         image_url: null,
@@ -166,7 +168,7 @@ export default function AddItemsScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       setMode('form');
     } catch (e: any) {
-      Alert.alert('Chyba', e?.message ?? 'Nelze načíst produkt.');
+      Alert.alert('Error', e?.message ?? 'Cannot load product.');
       lastBarcodeRef.current = null;
     } finally {
       setLooking(false);
@@ -174,13 +176,13 @@ export default function AddItemsScreen() {
   };
 
   // --------------------------------------------------------------
-  // Manuální přidání – bez EAN
+  // Manual add — no EAN
   // --------------------------------------------------------------
   const handleManual = () => {
     setDraft({
       name: '',
       quantity: 1,
-      unit: 'ks',
+      unit: 'pcs',
       expiry_date: '',
       barcode: null,
       image_url: null,
@@ -191,7 +193,7 @@ export default function AddItemsScreen() {
   };
 
   // --------------------------------------------------------------
-  // „Stejné, jiné datum" – zachovat aktuální draft, vyčistit datum
+  // "Same product, different date" — keep draft, clear expiry
   // --------------------------------------------------------------
   const handleSameAgain = (lastDraft: Draft) => {
     setDraft({
@@ -204,21 +206,21 @@ export default function AddItemsScreen() {
   };
 
   // --------------------------------------------------------------
-  // Přidání draftu do fronty
+  // Add the current draft into the queue
   // --------------------------------------------------------------
   const handleAddToQueue = async () => {
     if (!draft) return;
     const { name, quantity, unit, expiry_date } = draft;
     if (!name?.trim()) {
-      Alert.alert('Chybí název', 'Zadej název produktu.');
+      Alert.alert('Name required', 'Enter a product name.');
       return;
     }
     if (!quantity || quantity <= 0) {
-      Alert.alert('Chybí množství', 'Zadej kladné množství.');
+      Alert.alert('Quantity required', 'Enter a positive quantity.');
       return;
     }
     if (!expiry_date || !/^\d{4}-\d{2}-\d{2}$/.test(expiry_date)) {
-      Alert.alert('Chybí datum expirace', 'Vyber datum pomocí kalendáře.');
+      Alert.alert('Expiry date required', 'Pick a date from the calendar.');
       return;
     }
 
@@ -226,7 +228,7 @@ export default function AddItemsScreen() {
       localId: `${Date.now()}-${Math.random()}`,
       name: name.trim(),
       quantity,
-      unit: unit ?? 'ks',
+      unit: unit ?? 'pcs',
       expiry_date,
       barcode: draft.barcode ?? null,
       image_url: draft.image_url ?? null,
@@ -234,7 +236,7 @@ export default function AddItemsScreen() {
     };
     setQueue((q) => [...q, entry]);
 
-    // Pokud má barcode a custom_product to není, zapamatuj si pro příště
+    // If it has a barcode and isn't already a custom_product, remember it
     if (entry.barcode) {
       try {
         const { data: sess } = await supabase.auth.getSession();
@@ -254,7 +256,7 @@ export default function AddItemsScreen() {
           }
         }
       } catch {
-        // Non-fatal, logujeme tiše
+        // Non-fatal, log silently
       }
     }
 
@@ -262,7 +264,7 @@ export default function AddItemsScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setToast(entry.name);
 
-    // Reset, zpět na scan
+    // Reset, back to scan mode
     setDraft(null);
     setDraftSource(null);
     setShowDatePicker(false);
@@ -283,7 +285,7 @@ export default function AddItemsScreen() {
       setSaving(true);
       const { data: sess } = await supabase.auth.getSession();
       const userId = sess.session?.user.id;
-      if (!userId) throw new Error('Nejsi přihlášen.');
+      if (!userId) throw new Error('Not signed in.');
       await addItemsBatch(
         boxId,
         userId,
@@ -299,7 +301,7 @@ export default function AddItemsScreen() {
       );
       router.replace(`/box/${boxId}` as any);
     } catch (e: any) {
-      Alert.alert('Chyba ukládání', e?.message ?? 'Nelze uložit.');
+      Alert.alert('Save error', e?.message ?? 'Cannot save.');
     } finally {
       setSaving(false);
     }
@@ -310,33 +312,48 @@ export default function AddItemsScreen() {
   // --------------------------------------------------------------
   if (!permission) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Text style={styles.hint}>Připravuji kameru…</Text>
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <Text style={styles.hint}>Preparing camera…</Text>
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   if (!permission.granted) {
     return (
-      <SafeAreaView style={styles.center}>
-        <Stack.Screen options={{ title: 'Naskladnit' }} />
-        <Text style={styles.permTitle}>Potřebuju kameru</Text>
-        <Text style={styles.permText}>
-          Pro skenování čárových kódů produktů potřebuji přístup k fotoaparátu.
-        </Text>
-        <Pressable style={styles.btnPrimary} onPress={requestPermission}>
-          <Text style={styles.btnPrimaryText}>Povolit kameru</Text>
-        </Pressable>
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={handleManual}>
-          <Text style={styles.btnSecondaryText}>Přidat ručně</Text>
-        </Pressable>
-      </SafeAreaView>
+      <ScreenBackground>
+        <SafeAreaView style={styles.center}>
+          <Icon name="camera" size={96} style={styles.permIcon} />
+          <Text style={styles.permTitle}>Camera access needed</Text>
+          <Text style={styles.permText}>
+            I need camera access to scan product barcodes.
+          </Text>
+          <Pressable style={styles.btnPrimary} onPress={requestPermission}>
+            <Text style={styles.btnPrimaryText}>Allow camera</Text>
+          </Pressable>
+          <Pressable style={[styles.btn, styles.btnSecondary]} onPress={handleManual}>
+            <Text style={styles.btnSecondaryText}>Add manually</Text>
+          </Pressable>
+        </SafeAreaView>
+      </ScreenBackground>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['bottom']}>
-      <Stack.Screen options={{ title: 'Naskladnit' }} />
+    <ScreenBackground>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.topBar}>
+          <Pressable
+            hitSlop={12}
+            onPress={() => router.back()}
+            style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.5 }]}
+          >
+            <Icon name="chevron-left" size={28} />
+          </Pressable>
+          <Text style={styles.topBarTitle}>Add items</Text>
+          <View style={styles.topBarBtn} />
+        </View>
 
       {mode === 'scan' && (
         <>
@@ -358,20 +375,20 @@ export default function AddItemsScreen() {
                 setTorch((t) => !t);
               }}
             >
-              <Text style={styles.torchIcon}>{torch ? '🔦' : '💡'}</Text>
+              <Icon name={torch ? 'flashlight-on' : 'flashlight-off'} size={24} />
             </Pressable>
 
             <View style={styles.scanOverlay} pointerEvents="none">
               <View style={styles.scanFrame} />
               <Text style={styles.scanText}>
-                {looking ? 'Hledám produkt…' : 'Zamiř na čárový kód'}
+                {looking ? 'Looking up product…' : 'Point at a barcode'}
               </Text>
             </View>
           </View>
 
           <View style={styles.scanActions}>
             <Pressable style={[styles.smallBtn, styles.btnSecondary]} onPress={handleManual}>
-              <Text style={styles.btnSecondaryText}>Přidat ručně</Text>
+              <Text style={styles.btnSecondaryText}>Add manually</Text>
             </Pressable>
           </View>
         </>
@@ -387,26 +404,29 @@ export default function AddItemsScreen() {
               <Image source={{ uri: draft.image_url }} style={styles.draftImage} />
             ) : (
               <View style={styles.draftImagePlaceholder}>
-                <Text style={{ fontSize: 56 }}>
-                  {draft.category ? CATEGORY_EMOJI[draft.category] : '📦'}
-                </Text>
+                <Icon
+                  name={
+                    (draft.category ? CATEGORY_ICON[draft.category] : 'box-generic') as IconName
+                  }
+                  size={72}
+                />
               </View>
             )}
 
             <SourceBanner source={draftSource} barcode={draft.barcode ?? null} />
 
-            <Text style={styles.label}>Název</Text>
+            <Text style={styles.label}>Name</Text>
             <TextInput
               value={draft.name ?? ''}
               onChangeText={(v) => setDraft({ ...draft, name: v })}
-              placeholder="Název produktu"
+              placeholder="Product name"
               placeholderTextColor={colors.textSubtle}
               style={styles.input}
             />
 
             <View style={styles.row}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Množství</Text>
+                <Text style={styles.label}>Quantity</Text>
                 <TextInput
                   value={draft.quantity?.toString() ?? ''}
                   onChangeText={(v) =>
@@ -417,24 +437,24 @@ export default function AddItemsScreen() {
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Jednotka</Text>
+                <Text style={styles.label}>Unit</Text>
                 <ChipRow
                   options={UNITS}
-                  value={draft.unit ?? 'ks'}
+                  value={draft.unit ?? 'pcs'}
                   onChange={(u) => u && setDraft({ ...draft, unit: u })}
                 />
               </View>
             </View>
 
-            <Text style={styles.label}>Datum expirace</Text>
+            <Text style={styles.label}>Expiry date</Text>
             <Pressable
               style={[styles.input, styles.dateField]}
               onPress={() => setShowDatePicker((s) => !s)}
             >
               <Text style={[styles.dateText, !draft.expiry_date && styles.datePlaceholder]}>
-                {draft.expiry_date ? formatDateCs(draft.expiry_date) : 'Vyber datum'}
+                {draft.expiry_date ? formatDate(draft.expiry_date) : 'Pick a date'}
               </Text>
-              <Text style={styles.dateChevron}>{showDatePicker ? '▴' : '▾'}</Text>
+              <Icon name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={14} />
             </Pressable>
             {showDatePicker && (
               <View style={styles.datePickerWrap}>
@@ -443,7 +463,7 @@ export default function AddItemsScreen() {
                   mode="date"
                   display={Platform.OS === 'ios' ? 'inline' : 'default'}
                   minimumDate={new Date(2000, 0, 1)}
-                  locale="cs-CZ"
+                  locale="en-GB"
                   onChange={(event: DateTimePickerEvent, selected?: Date) => {
                     // Android: close on any event. iOS inline: only update state.
                     if (Platform.OS === 'android') setShowDatePicker(false);
@@ -456,17 +476,20 @@ export default function AddItemsScreen() {
               </View>
             )}
 
-            <Text style={styles.label}>Kategorie</Text>
+            <Text style={styles.label}>Category</Text>
             <ChipRow
               options={CATEGORIES}
               value={draft.category ?? null}
               onChange={(c) => setDraft({ ...draft, category: c })}
-              renderLabel={(c) => `${CATEGORY_EMOJI[c]} ${c}`}
+              renderLabel={(c) => c}
               allowNull
             />
 
             <Pressable style={[styles.btn, styles.btnPrimary]} onPress={handleAddToQueue}>
-              <Text style={styles.btnPrimaryText}>+ Přidat do fronty</Text>
+              <View style={styles.btnContent}>
+                <Icon name="plus" size={18} />
+                <Text style={styles.btnPrimaryText}>Add to queue</Text>
+              </View>
             </Pressable>
 
             <Pressable
@@ -479,20 +502,20 @@ export default function AddItemsScreen() {
                 setMode('scan');
               }}
             >
-              <Text style={styles.btnSecondaryText}>Zrušit</Text>
+              <Text style={styles.btnSecondaryText}>Cancel</Text>
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>
       )}
 
-      {/* Fronta – vždy pod obsahem */}
+      {/* Queue — always pinned below content */}
       {queue.length > 0 && mode === 'scan' && (
         <View style={styles.queueContainer}>
           <View style={styles.queueHeader}>
-            <Text style={styles.queueTitle}>Fronta ({queue.length})</Text>
+            <Text style={styles.queueTitle}>Queue ({queue.length})</Text>
             <Pressable onPress={handleSaveAll} disabled={saving}>
               <Text style={[styles.saveAllText, saving && { opacity: 0.5 }]}>
-                {saving ? 'Ukládám…' : 'Uložit vše'}
+                {saving ? 'Saving…' : 'Save all'}
               </Text>
             </Pressable>
           </View>
@@ -516,24 +539,26 @@ export default function AddItemsScreen() {
       {saving && (
         <View style={styles.savingOverlay}>
           <ActivityIndicator color="#FFFFFF" size="large" />
-          <Text style={styles.savingText}>Ukládám {queue.length} položek…</Text>
+          <Text style={styles.savingText}>Saving {queue.length} items…</Text>
         </View>
       )}
 
-      {/* Toast: ✓ Přidáno */}
+      {/* Toast: ✓ Added */}
       {toast && (
         <Animated.View style={[styles.toast, { opacity: toastOpacity }]} pointerEvents="none">
+          <Icon name="check" size={16} />
           <Text style={styles.toastText} numberOfLines={1}>
-            ✓ Přidáno: {toast}
+            Added: {toast}
           </Text>
         </Animated.View>
       )}
-    </SafeAreaView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 // ---------------------------------------------------------------------------
-// SourceBanner – J: info odkud draft pochází
+// SourceBanner — shows where the current draft came from
 // ---------------------------------------------------------------------------
 
 function SourceBanner({
@@ -547,8 +572,9 @@ function SourceBanner({
   if (source === 'custom') {
     return (
       <View style={[styles.sourceBanner, styles.sourceCustom]}>
+        <Icon name="check" size={16} />
         <Text style={[styles.sourceText, { color: colors.successText }]}>
-          ✓ Dříve přidaný produkt — doplň množství a datum
+          Previously added product — fill quantity and date
         </Text>
       </View>
     );
@@ -556,8 +582,9 @@ function SourceBanner({
   if (source === 'off') {
     return (
       <View style={[styles.sourceBanner, styles.sourceOff]}>
+        <Icon name="check" size={16} />
         <Text style={[styles.sourceText, { color: colors.infoText }]}>
-          ✓ Načteno z Open Food Facts — zkontroluj a doplň datum
+          Loaded from Open Food Facts — verify and add a date
         </Text>
       </View>
     );
@@ -565,10 +592,11 @@ function SourceBanner({
   // manual
   return (
     <View style={[styles.sourceBanner, styles.sourceManual]}>
+      <Icon name="warning" size={16} />
       <Text style={[styles.sourceText, { color: colors.warningText }]}>
         {barcode
-          ? `⚠️ Produkt ${barcode} není v databázi — vyplň ručně`
-          : 'Ruční zadání'}
+          ? `Product ${barcode} not in database — fill in manually`
+          : 'Manual entry'}
       </Text>
     </View>
   );
@@ -612,7 +640,7 @@ function ChipRow<T extends string>({
 }
 
 // ---------------------------------------------------------------------------
-// QueueChip – karta ve frontě
+// QueueChip — a card shown in the queue
 // ---------------------------------------------------------------------------
 
 function QueueChip({
@@ -632,14 +660,15 @@ function QueueChip({
   return (
     <View style={styles.queueChip}>
       <Pressable onPress={onRemove} style={styles.queueRemove}>
-        <Text style={styles.queueRemoveText}>×</Text>
+        <Icon name="close" size={14} />
       </Pressable>
       {draft.image_url ? (
         <Image source={{ uri: draft.image_url }} style={styles.queueImage} />
       ) : (
-        <Text style={styles.queueEmoji}>
-          {draft.category ? CATEGORY_EMOJI[draft.category] : '📦'}
-        </Text>
+        <Icon
+          name={(draft.category ? CATEGORY_ICON[draft.category] : 'box-generic') as IconName}
+          size={44}
+        />
       )}
       <Text numberOfLines={2} style={styles.queueName}>
         {draft.name}
@@ -653,7 +682,10 @@ function QueueChip({
         </Text>
       </View>
       <Pressable onPress={onSameAgain} style={styles.queueAgainBtn}>
-        <Text style={styles.queueAgainText}>↻ Jiné datum</Text>
+        <View style={styles.queueAgainContent}>
+          <Icon name="retry" size={10} />
+          <Text style={styles.queueAgainText}>Different date</Text>
+        </View>
       </Pressable>
     </View>
   );
@@ -661,10 +693,29 @@ function QueueChip({
 
 // ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  topBarBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarTitle: {
+    ...typography.headline,
+    color: colors.text,
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: spacing.sm,
+  },
   center: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.xxl,
@@ -673,6 +724,7 @@ const styles = StyleSheet.create({
     ...typography.subhead,
     color: colors.textMuted,
   },
+  permIcon: { marginBottom: spacing.lg },
   permTitle: {
     ...typography.title2,
     color: colors.text,
@@ -788,6 +840,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     alignItems: 'center',
   },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
   btnPrimary: { backgroundColor: colors.primary },
   btnPrimaryText: {
     ...typography.bodyStrong,
@@ -867,9 +924,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1,
   },
-  queueRemoveText: { color: '#FFFFFF', fontSize: 16, lineHeight: 18 },
   queueImage: { width: 50, height: 50, borderRadius: radius.sm + 2, resizeMode: 'contain' },
-  queueEmoji: { fontSize: 36, marginVertical: 4 },
   queueName: {
     fontSize: 11,
     fontWeight: '600',
@@ -897,6 +952,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
     borderColor: colors.border,
+  },
+  queueAgainContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   queueAgainText: {
     fontSize: 10,
@@ -928,7 +988,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  torchIcon: { fontSize: 22 },
 
   // Toast
   toast: {
@@ -936,6 +995,10 @@ const styles = StyleSheet.create({
     top: 60,
     left: spacing.lg,
     right: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
     backgroundColor: colors.primary,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
@@ -950,12 +1013,14 @@ const styles = StyleSheet.create({
     ...typography.footnote,
     color: colors.textOnPrimary,
     fontWeight: '700',
-    textAlign: 'center',
   },
 
   // Source banner (J)
   sourceBanner: {
     alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
@@ -977,6 +1042,6 @@ const styles = StyleSheet.create({
   sourceText: {
     ...typography.footnote,
     fontWeight: '600',
-    textAlign: 'center',
+    flex: 1,
   },
 });

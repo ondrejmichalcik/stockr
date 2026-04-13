@@ -1,21 +1,22 @@
 // ============================================================================
 // Stockr – QR scanner
-// Fullscreen kamera, detekce QR → getBoxByQr → navigate na detail
+// Fullscreen camera, detect QR → getBoxByQr → navigate to detail
 // ============================================================================
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { getBoxByQr } from '@/src/lib/supabase';
 import { colors, radius, spacing, typography } from '@/src/theme';
+import { Icon } from '@/src/components/Icon';
 
 export default function ScanScreen() {
   const router = useRouter();
   const [permission, requestPermission] = useCameraPermissions();
   const [processing, setProcessing] = useState(false);
-  // Debounce: expo-camera volá onBarcodeScanned pro každý frame.
-  // Držíme si poslední zpracovaný kód v ref, abychom ho znovu neotevírali.
+  // Debounce: expo-camera fires onBarcodeScanned on every frame. We keep the
+  // last handled code in a ref so we don't re-open it.
   const lastCodeRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -31,7 +32,7 @@ export default function ScanScreen() {
     try {
       const box = await getBoxByQr(code);
       if (!box) {
-        Alert.alert('Neznámý QR kód', 'Tato bedna není v tvém skladu.', [
+        Alert.alert('Unknown QR code', 'This box is not in your warehouse.', [
           {
             text: 'OK',
             onPress: () => {
@@ -44,7 +45,7 @@ export default function ScanScreen() {
       }
       router.replace(`/box/${box.id}` as any);
     } catch (e: any) {
-      Alert.alert('Chyba', e?.message ?? 'Nelze načíst bednu.', [
+      Alert.alert('Error', e?.message ?? 'Cannot load box.', [
         {
           text: 'OK',
           onPress: () => {
@@ -60,7 +61,7 @@ export default function ScanScreen() {
   if (!permission) {
     return (
       <SafeAreaView style={styles.center}>
-        <Text style={styles.hint}>Připravuji kameru…</Text>
+        <Text style={styles.hint}>Preparing camera…</Text>
       </SafeAreaView>
     );
   }
@@ -68,13 +69,13 @@ export default function ScanScreen() {
   if (!permission.granted) {
     return (
       <SafeAreaView style={styles.center}>
-        <Stack.Screen options={{ title: 'Skenovat QR' }} />
-        <Text style={styles.permTitle}>Potřebuju kameru</Text>
+        <Icon name="camera" size={96} style={styles.permIcon} />
+        <Text style={styles.permTitle}>Camera access needed</Text>
         <Text style={styles.permText}>
-          Stockr potřebuje přístup k fotoaparátu pro skenování QR kódů beden.
+          Stockr needs camera access to scan box QR codes.
         </Text>
         <Pressable style={styles.btnPrimary} onPress={requestPermission}>
-          <Text style={styles.btnPrimaryText}>Povolit kameru</Text>
+          <Text style={styles.btnPrimaryText}>Allow camera</Text>
         </Pressable>
       </SafeAreaView>
     );
@@ -82,24 +83,23 @@ export default function ScanScreen() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: 'Skenovat QR', headerTransparent: true, headerTintColor: '#fff' }} />
       <CameraView
         style={StyleSheet.absoluteFill}
         facing="back"
         barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         onBarcodeScanned={({ data }) => handleCode(data)}
       />
-      {/* Overlay s hledáčkem */}
+      {/* Viewfinder overlay */}
       <View style={styles.overlay} pointerEvents="none">
         <View style={styles.frame} />
         <Text style={styles.overlayText}>
-          {processing ? 'Načítám bednu…' : 'Zamiř na QR kód bedny'}
+          {processing ? 'Loading box…' : 'Point at a box QR code'}
         </Text>
       </View>
 
       <SafeAreaView style={styles.bottomBar} edges={['bottom']}>
         <Pressable style={styles.cancelBtn} onPress={() => router.back()}>
-          <Text style={styles.cancelText}>Zrušit</Text>
+          <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
       </SafeAreaView>
     </View>
@@ -124,6 +124,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     marginBottom: spacing.md,
   },
+  permIcon: { marginBottom: spacing.lg },
   permText: {
     ...typography.subhead,
     color: colors.textMuted,

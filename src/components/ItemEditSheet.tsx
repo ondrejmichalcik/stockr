@@ -1,6 +1,6 @@
 // ============================================================================
 // Stockr – ItemEditSheet
-// Modal-like sheet pro editaci existující položky. Používá se v box/[id].tsx.
+// Modal-like sheet for editing an existing item. Used from box/[id].tsx.
 // ============================================================================
 import { useEffect, useState } from 'react';
 import {
@@ -20,14 +20,15 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { deleteItem, updateItem } from '@/src/lib/supabase';
 import {
   CATEGORIES,
-  CATEGORY_EMOJI,
   UNITS,
-  formatDateCs,
+  formatDate,
   fromIsoDate,
   toIsoDate,
 } from '@/src/types/database';
 import type { Category, Item, Unit } from '@/src/types/database';
 import { colors, radius, spacing, typography } from '@/src/theme';
+import { ScreenBackground } from '@/src/components/ScreenBackground';
+import { Icon } from '@/src/components/Icon';
 
 export interface ItemEditSheetProps {
   item: Item;
@@ -58,7 +59,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
     Number.isInteger(item.quantity) ? String(item.quantity) : item.quantity.toString(),
   );
 
-  // Reset formuláře při změně item (když user zavře a otevře jiný)
+  // Reset form when the item changes (user closes and opens a different one)
   useEffect(() => {
     setDraft({
       name: item.name,
@@ -74,10 +75,10 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
   }, [item.id]);
 
   const handleDelete = () => {
-    Alert.alert('Smazat položku', `Opravdu smazat „${item.name}"?`, [
-      { text: 'Zrušit', style: 'cancel' },
+    Alert.alert('Delete item', `Really delete "${item.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Smazat',
+        text: 'Delete',
         style: 'destructive',
         onPress: async () => {
           try {
@@ -86,7 +87,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
             onDeleted(item.id);
           } catch (e: any) {
             setSaving(false);
-            Alert.alert('Chyba', e?.message ?? 'Nelze smazat.');
+            Alert.alert('Error', e?.message ?? 'Cannot delete.');
           }
         },
       },
@@ -96,12 +97,12 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
   const handleSave = async () => {
     const name = draft.name.trim();
     if (!name) {
-      Alert.alert('Chybí název', 'Zadej název produktu.');
+      Alert.alert('Name required', 'Enter a product name.');
       return;
     }
     const qty = parseFloat(quantityText.replace(',', '.'));
     if (!qty || qty <= 0) {
-      Alert.alert('Neplatné množství', 'Zadej kladné číslo.');
+      Alert.alert('Invalid quantity', 'Enter a positive number.');
       return;
     }
     try {
@@ -115,24 +116,25 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
       });
       onSaved(updated);
     } catch (e: any) {
-      Alert.alert('Chyba', e?.message ?? 'Nelze uložit.');
+      Alert.alert('Error', e?.message ?? 'Cannot save.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <View style={styles.header}>
+    <ScreenBackground>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.header}>
         <Pressable hitSlop={12} onPress={onClose} disabled={saving}>
-          <Text style={[styles.headerBtn, saving && { opacity: 0.4 }]}>Zrušit</Text>
+          <Text style={[styles.headerBtn, saving && { opacity: 0.4 }]}>Cancel</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Upravit položku</Text>
+        <Text style={styles.headerTitle}>Edit item</Text>
         <Pressable hitSlop={12} onPress={handleSave} disabled={saving}>
           {saving ? (
             <ActivityIndicator color={colors.primary} />
           ) : (
-            <Text style={[styles.headerBtn, styles.headerBtnPrimary]}>Uložit</Text>
+            <Text style={[styles.headerBtn, styles.headerBtnPrimary]}>Save</Text>
           )}
         </Pressable>
       </View>
@@ -142,18 +144,18 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <Text style={styles.label}>Název</Text>
+          <Text style={styles.label}>Name</Text>
           <TextInput
             value={draft.name}
             onChangeText={(v) => setDraft({ ...draft, name: v })}
-            placeholder="Název produktu"
+            placeholder="Product name"
             placeholderTextColor={colors.textSubtle}
             style={styles.input}
           />
 
           <View style={styles.row}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Množství</Text>
+              <Text style={styles.label}>Quantity</Text>
               <TextInput
                 value={quantityText}
                 onChangeText={setQuantityText}
@@ -162,7 +164,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
               />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Jednotka</Text>
+              <Text style={styles.label}>Unit</Text>
               <ChipRow
                 options={UNITS}
                 value={draft.unit}
@@ -171,16 +173,16 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
             </View>
           </View>
 
-          <Text style={styles.label}>Datum expirace</Text>
+          <Text style={styles.label}>Expiry date</Text>
           <View style={styles.dateRow}>
             <Pressable
               style={[styles.input, styles.dateField, { flex: 1 }]}
               onPress={() => setShowDatePicker((s) => !s)}
             >
               <Text style={[styles.dateText, !draft.expiry_date && styles.datePlaceholder]}>
-                {draft.expiry_date ? formatDateCs(draft.expiry_date) : 'Bez data'}
+                {draft.expiry_date ? formatDate(draft.expiry_date) : 'No date'}
               </Text>
-              <Text style={styles.dateChevron}>{showDatePicker ? '▴' : '▾'}</Text>
+              <Icon name={showDatePicker ? 'chevron-up' : 'chevron-down'} size={14} />
             </Pressable>
             {draft.expiry_date && (
               <Pressable
@@ -190,7 +192,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
                   setShowDatePicker(false);
                 }}
               >
-                <Text style={styles.dateClearText}>Smazat</Text>
+                <Text style={styles.dateClearText}>Clear</Text>
               </Pressable>
             )}
           </View>
@@ -201,7 +203,7 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
                 mode="date"
                 display={Platform.OS === 'ios' ? 'inline' : 'default'}
                 minimumDate={new Date(2000, 0, 1)}
-                locale="cs-CZ"
+                locale="en-GB"
                 onChange={(event: DateTimePickerEvent, selected?: Date) => {
                   if (Platform.OS === 'android') setShowDatePicker(false);
                   if (event.type === 'dismissed') return;
@@ -213,12 +215,12 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
             </View>
           )}
 
-          <Text style={styles.label}>Kategorie</Text>
+          <Text style={styles.label}>Category</Text>
           <ChipRow
             options={CATEGORIES}
             value={draft.category}
             onChange={(c) => setDraft({ ...draft, category: c })}
-            renderLabel={(c) => `${CATEGORY_EMOJI[c]} ${c}`}
+            renderLabel={(c) => c}
             allowNull
           />
 
@@ -227,16 +229,20 @@ export function ItemEditSheet({ item, onClose, onSaved, onDeleted }: ItemEditShe
             onPress={handleDelete}
             disabled={saving}
           >
-            <Text style={styles.deleteBtnText}>Smazat položku</Text>
+            <View style={styles.deleteBtnContent}>
+              <Icon name="trash" size={18} />
+              <Text style={styles.deleteBtnText}>Delete item</Text>
+            </View>
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 // ---------------------------------------------------------------------------
-// ChipRow – vnitřní helper
+// ChipRow — internal helper
 // ---------------------------------------------------------------------------
 function ChipRow<T extends string>({
   options,
@@ -276,7 +282,7 @@ function ChipRow<T extends string>({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -285,7 +291,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: 'transparent',
   },
   headerTitle: {
     ...typography.headline,
@@ -380,6 +386,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.dangerBgStrong,
     alignItems: 'center',
+  },
+  deleteBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
   },
   deleteBtnText: {
     ...typography.subhead,

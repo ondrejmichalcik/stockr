@@ -1,6 +1,6 @@
 // ============================================================================
 // Stockr – BoxEditSheet
-// Modal-like sheet pro editaci existující bedny (jméno, lokace).
+// Modal-like sheet for editing an existing box (name, location).
 // ============================================================================
 import { useEffect, useState } from 'react';
 import {
@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { updateBox } from '@/src/lib/supabase';
 import type { Box } from '@/src/types/database';
 import { colors, radius, spacing, typography } from '@/src/theme';
+import { ScreenBackground } from '@/src/components/ScreenBackground';
 
 export interface BoxEditSheetProps {
   box: Box;
@@ -39,7 +40,7 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
   const handleSave = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
-      Alert.alert('Chybí název', 'Bedna musí mít název.');
+      Alert.alert('Name required', 'The box needs a name.');
       return;
     }
     try {
@@ -50,24 +51,25 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
       });
       onSaved(updated);
     } catch (e: any) {
-      Alert.alert('Chyba', e?.message ?? 'Nelze uložit.');
+      Alert.alert('Error', e?.message ?? 'Cannot save.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <View style={styles.header}>
+    <ScreenBackground>
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.header}>
         <Pressable hitSlop={12} onPress={onClose} disabled={saving}>
-          <Text style={[styles.headerBtn, saving && { opacity: 0.4 }]}>Zrušit</Text>
+          <Text style={[styles.headerBtn, saving && { opacity: 0.4 }]}>Cancel</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Upravit bednu</Text>
+        <Text style={styles.headerTitle}>Edit box</Text>
         <Pressable hitSlop={12} onPress={handleSave} disabled={saving}>
           {saving ? (
             <ActivityIndicator color={colors.primary} />
           ) : (
-            <Text style={[styles.headerBtn, styles.headerBtnPrimary]}>Uložit</Text>
+            <Text style={[styles.headerBtn, styles.headerBtnPrimary]}>Save</Text>
           )}
         </Pressable>
       </View>
@@ -77,21 +79,21 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <Text style={styles.label}>Název bedny</Text>
+          <Text style={styles.label}>Box name</Text>
           <TextInput
             value={name}
             onChangeText={setName}
-            placeholder="Léky A"
+            placeholder="Meds A"
             placeholderTextColor={colors.textSubtle}
             style={styles.input}
             autoFocus
           />
 
-          <Text style={styles.label}>Umístění (volitelné)</Text>
+          <Text style={styles.label}>Location (optional)</Text>
           <TextInput
             value={location}
             onChangeText={setLocation}
-            placeholder="Police 2, řada 1"
+            placeholder="Shelf 2, row 1"
             placeholderTextColor={colors.textSubtle}
             style={styles.input}
             returnKeyType="done"
@@ -99,12 +101,13 @@ export function BoxEditSheet({ box, onClose, onSaved }: BoxEditSheetProps) {
           />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -113,7 +116,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: 'transparent',
   },
   headerTitle: {
     ...typography.headline,

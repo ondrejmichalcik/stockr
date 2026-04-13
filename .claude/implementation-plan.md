@@ -92,98 +92,77 @@ Při prvním pokusu o build a rozjetí appky se objevila série problémů, kter
 
 ---
 
-## Sprint 2.5 – UI polish & tech debt 🚧
+## Sprint 2.5 – UI polish & tech debt ✅
 
-Insertnutý mezi Sprint 2 a Sprint 3. Cíl: projekt převést do angličtiny, sjednotit design language (brand green paleta + custom ikonografie), vyřešit dlouhodobý tech debt kolem buildu před tím, než začneme přidávat další native moduly pro Sprint 3.
+Insertnutý mezi Sprint 2 a Sprint 3. Cíl: projekt převést do angličtiny, sjednotit design language (brand green paleta + custom ikonografie), vyřešit dlouhodobý tech debt kolem buildu před tím, než začneme přidávat další native moduly pro Sprint 3. **Uzavřeno 2026-04-13.**
 
-### Fáze 1 — Tech debt (první, mění dependencies)
+### Fáze 1 — Tech debt ✅
 
-- ⏳ **Expo SDK 51 → 54+ upgrade**
-  - `npx expo install expo@latest --fix`
-  - Projít breaking changes (Expo Router v3→v4, expo-camera API, reanimated, ...)
-  - `npx expo prebuild --clean --platform ios` + `npx expo run:ios`
-  - Ověřit že všechny Sprint 1+2 flows fungují (dashboard, scan, box create, add items, edit sheet, swipe delete)
-  - **Očekávaný benefit:** iOS 26 kompatibilita upstream → `DevMenuViewController` patch už nepotřeba
-- ⏳ **patch-package fallback** — jen pokud SDK upgrade nevyřeší DevMenu issue
-  - `npm install --save-dev patch-package postinstall-postinstall`
-  - `package.json` postinstall script
-  - `npx patch-package expo-dev-menu`
-  - Commit `patches/` adresáře
+- ✅ **Expo SDK 51 → 55.0.14 upgrade** (4 major verze)
+  - React 18.2.0 → 19.2.0
+  - React Native 0.74.5 → 0.83.4
+  - Reanimated 3 → 4.2.1 (přidán `react-native-worklets` jako peer dep)
+  - Všechny expo moduly na `~55.x`
+  - TypeScript 5.3 → 5.9, `@types/react` → 19.2.10
+  - `.npmrc` s `legacy-peer-deps=true` pro RN peer rezoluci
+  - ChipRow null-guard fixy (TS 5.9 stricter)
+  - `npx expo-doctor` 17/17 passes
+- ✅ **patch-package fallback nepotřeba** — SDK 55 má iOS 26 kompatibilitu upstream, `DevMenuViewController` patch obsoletní
 
-### Fáze 2 — Design system foundation
+### Fáze 2 — Design system foundation ✅
 
-- ⏳ **`src/theme/colors.ts`** — barevná paleta odvozená z brand green `#1E5F3E`
-  - `primary` / `primaryDark` / `primaryLight`
-  - `background` / `surface` / `surfaceElevated`
-  - `text` / `textMuted` / `textOnPrimary`
-  - `border` / `borderStrong`
-  - `danger` / `warning` / `success` / `info`
-  - `expiryExpired` / `expiryCritical` / `expirySoon` / `expiryOk` / `expiryNone` (re-tune do sladěné palety)
-- ⏳ **`src/theme/spacing.ts`** — `xs | sm | md | lg | xl | 2xl` scale (4 / 8 / 12 / 16 / 24 / 32)
-- ⏳ **`src/theme/typography.ts`** — `heading1 | heading2 | title | body | caption | label` tokeny
-- ⏳ **`src/theme/index.ts`** — barrel export + `theme` objekt pro jednoduchý import
-- ⏳ **Aplikovat napříč screeny:**
-  - `app/(auth)/login.tsx`
-  - `app/(app)/index.tsx` (Dashboard + custom header)
-  - `app/(app)/scan.tsx`
-  - `app/(app)/box/new.tsx`
-  - `app/(app)/box/[id].tsx` (list + grid variants)
-  - `app/(app)/box/[id]/add-items.tsx`
-  - `src/components/ItemEditSheet.tsx`
-  - `src/components/BoxEditSheet.tsx`
-- ⏳ **Status bar + splash** — doladit `statusBarStyle`, `backgroundColor` v `app.json`
+- ✅ **`src/theme/colors.ts`** — **dark-first** sage green paleta odvozená z app icon gradientu
+  - Sage scale 50–900, status colors tuned pro dark bg (vyšší luminosity)
+  - Surfaces = rgba bílé overlay (6/10 %), text = #FFFFFF + rgba alpha
+  - Expiry states jako rgba tint overlays
+  - Hero tokeny (login/splash) = aliasy default tokens
+- ✅ **`src/theme/spacing.ts`** — xs(4) / sm(8) / md(12) / lg(16) / xl(24) / xxl(32) / xxxl(48)
+- ✅ **`src/theme/typography.ts`** — iOS HIG scale (largeTitle / title1–3 / headline / body / callout / subhead / footnote / caption / label)
+- ✅ **`src/theme/radius.ts`** — sm / md / lg / xl / xxl / full
+- ✅ **`src/theme/shadows.ts`** — none / sm / md / lg presety
+- ✅ **`src/theme/index.ts`** — barrel export + `theme` objekt
+- ✅ **Aplikovat napříč screeny** — Login (hero image), Dashboard, Box detail (list+grid), Box new, Add items, Scan, ItemEditSheet, BoxEditSheet
+- ✅ **Hero assety** — `login-hero.png` (crate + gradient) a `screen-bg.png` (diagonal gradient TL→BR bez crate) generované přes PIL ze splash.png
+- ✅ **`<ScreenBackground>` wrapper** — jednotný ImageBackground komponent na všech screens
+- ✅ **Native stack headery hidden globálně**, custom in-screen top bary (back / title / more)
+- ✅ **Status bar** přepnut na `light`, Stack contentStyle defaultně `colors.background`
+- ✅ **Splash** sjednocen s login — app.json používá `login-hero.png` s cover resize módem pro seamless transition
 
-### Fáze 3 — Iconography
+### Fáze 3 — Iconography ✅
 
-- ⏳ **Inventarizace ikon** — finální seznam bude ve shared dokumentu, tipuji:
-  - Navigation: `back`, `close`, `check`, `chevron-right`, `more` (3 dots)
-  - Actions: `add` (plus), `edit` (pencil), `delete` (trash), `share`, `copy`, `print`, `retry`
-  - Input: `scan` (QR), `camera`, `gallery`, `flashlight-on`, `flashlight-off`
-  - Display: `grid`, `list`, `search`, `filter`, `sort`
-  - Status: `expired`, `critical`, `soon`, `ok`, `empty` (pro empty states)
-  - Auth: `apple-logo` (pokud nepoužijeme built-in Apple button)
-- ⏳ **User vygeneruje přes nano banana** — dodávka do `assets/icons/`, naming: `{name}.png` 512×512 nebo `{name}.svg`
-- ⏳ **`src/components/Icon.tsx`** — wrapper komponenta, props: `name`, `size`, `color` (tint přes `tintColor` pro PNG nebo `fill` pro SVG)
-- ⏳ **Nahradit všechny emoji + text-only labely** — `📦 / 🖨 / 📷 / ✏️ / 🗑 / 🔦` → `<Icon />`
-- ⏳ **Action sheety** zůstávají textové (iOS native), ale v header buttonech všude `<Icon />`
+- ✅ **Inventarizace 32 ikon** v 4 batchích + mini batch
+- ✅ **Generováno přes nano banana** — monochromatické sage green 3D ikony ve stylu app icon, postupně 4 batche + regen jednotlivých ikon
+- ✅ **PIL chroma key cleanup** — nano banana vykreslila checker pattern jako RGB pixely, fix přes detection `|R-G| + |G-B| + |R-B| < threshold` a smooth alpha transition
+- ✅ **Resize 2048×2048 → 512×512** (195 MB → 9.5 MB bundle)
+- ✅ **`src/components/Icon.tsx`** — registry s 32 ikonami, `name` prop, optional `tintColor`
+- ✅ **`CATEGORY_ICON`** mapping v `database.ts` pro Category → ikona
+- ✅ **Nahrazení emoji napříč screens** — chrome (back, more, close, plus, ⋯), actions (edit, trash, copy, share, print, retry), input (camera, flashlight, scan-qr, grid, list), status (warning, inbox, check), category icons (food-can, medicine-pill, water-drop, disinfectant-bottle, tool-wrench, battery, document, box-generic), pin
+- ❌ **iOS ActionSheetIOS emoji** ponecháno textově — systém neumožňuje image v native sheetu
 
-### Fáze 4 — Translation (poslední, ať překládáme finální UI)
+### Fáze 4 — Translation to English ✅
 
-- ✅ **CLAUDE.md** — jazyková konvence přepsána na EN (už hotovo v setup fázi Sprintu 2.5)
-- ⏳ **Doménové termíny** — konzistentní napříč UI i kódem:
-  - bedna → **box**
-  - sklad → **warehouse**
-  - naskladnit / naskladňovací session → **add items**
-  - položka → **item**
-  - expirace → **expiry** (datum), **expires on** (věta)
-  - štítek → **label** (QR label)
-  - pozvánka → **invitation**
-  - člen → **member**
-- ⏳ **Projet a přeložit všechny stringy:**
-  - `app/(auth)/login.tsx`
-  - `app/(app)/index.tsx`
-  - `app/(app)/scan.tsx`
-  - `app/(app)/box/new.tsx`
-  - `app/(app)/box/[id].tsx`
-  - `app/(app)/box/[id]/add-items.tsx`
-  - `src/components/ItemEditSheet.tsx`
-  - `src/components/BoxEditSheet.tsx`
-  - `src/lib/supabase.ts` (error messages vracené do UI, pokud nějaké jsou)
-  - `src/lib/openFoodFacts.ts` (kategorie mapping — přeložit názvy)
-  - `src/types/database.ts` (expiry status labely, `formatExpiry` helper)
-- ⏳ **Rename `formatDateCs` → `formatDate`** v `src/types/database.ts`, format zachován (DD. MM. YYYY), aktualizovat callers
-- ⏳ **Rename domain proměnných v kódu** — pokud někde je `bedna`, `sklad` apod., přejmenovat na EN
-- ⏳ **Komentáře v kódu** — přeložit CZ komentáře na EN (ne masivně, ale když narazíme)
+- ✅ **`Category` enum**: Czech → English (food, medicine, water, disinfectant, equipment, energy, documents, other) + DB migrace
+- ✅ **`Unit` enum**: ks→pcs, bal→pack + DB migrace
+- ✅ **DB migration script**: `supabase/migrations/20260413_rename_enums_to_english.sql` — idempotentní, spuštěno v Supabase
+- ✅ **`schema.sql` CHECK constraints** updated na EN hodnoty
+- ✅ **`formatDateCs` → `formatDate`** rename, format DD. M. YYYY zachován
+- ✅ **`formatExpiry`** texty přeloženy (Expired / Expires today/tomorrow/in X days/mo/yr)
+- ✅ **Doménové termíny** — bedna→box, sklad→warehouse, naskladnit→add items, položka→item, expirace→expiry, štítek→label
+- ✅ **UI stringy přeloženy** napříč všemi screens + sheety + alert dialogy + deep link handler
+- ✅ **Date picker locale** `cs-CZ` → `en-GB`
+- ✅ **Default warehouse name** `Domácí sklad` → `Home` (v `ensureWarehouse`)
+- ✅ **openFoodFacts** category mapping + error messages přeloženy
+- ⚠️ **Zbývající CZ komentáře v kódu** (supabase.ts, některé screens) — nepriorita, postupně
 
-### Akceptační kritéria Sprintu 2.5
+### Akceptační kritéria Sprintu 2.5 ✅
 
-- [ ] Appka se buildí a běží na Expo SDK 54+ (nebo nejnovější)
-- [ ] Žádný ruční patch v `node_modules` není potřeba (nebo je persisted přes `patch-package`)
-- [ ] `src/theme/` existuje a všechny screeny ho používají místo hardcoded hexů
-- [ ] Žádný emoji v UI (kromě záměrného obsahu)
-- [ ] Všechny custom ikony z `assets/icons/` integrované přes `<Icon />`
-- [ ] Žádná česká string v renderu (grep `[ěščřžýáíéůúťď]` v `app/` a `src/components/` = 0 výsledků)
-- [ ] Sprint 1 + 2 flows stále fungují (viz `test-scenarios.md`)
+- [x] Appka se buildí a běží na Expo SDK 55
+- [x] Žádný ruční patch v `node_modules` není potřeba (SDK upgrade fixnulo iOS 26 issue)
+- [x] `src/theme/` existuje a všechny screeny ho používají místo hardcoded hexů
+- [x] Žádný emoji v UI (kromě iOS ActionSheet — system limitation)
+- [x] Všech 32 ikon z `assets/icons/` integrováno přes `<Icon />`
+- [x] Žádná česká string v user-facing renderu
+- [x] Sprint 1 + 2 flows stále fungují (smoke test ověřen, enum migrace OK)
 
 ---
 
@@ -439,21 +418,32 @@ eas submit --platform ios
 
 Po otevření nové session a prozkoumání stavu:
 
-1. **Ověř, že patch `DevMenuViewController.swift` pořád drží** — pokud ne (po `npm install`), re-applikovat nebo nastavit `patch-package`
-2. **Zkontroluj, že Metro bundler naběhne a appka se spustí** — `npx expo start --dev-client` a v simulátoru v dev client klikni connect
-3. **Rozhodni, co dál**:
-   - **Sprint 3 Fáze A** (image upload + manuální foto) — nízkoriziková, půl dne
-   - **Fyzický iPhone signing setup** — pro reálný Apple Sign In + haptic + kamera
-   - **patch-package setup** — tech debt cleanup
-   - **Expo SDK upgrade** — větší rework, ale eliminuje patch
+1. **Zkontroluj, že Metro bundler naběhne a appka se spustí** — `npx expo start --dev-client` a v simulátoru reload
+2. **Potvrď, že DB migrace z Sprintu 2.5 běží** — items.category a items.unit musí mít EN hodnoty (food/medicine/... a pcs/pack)
+3. **Rozhodni, co dál ze Sprintu 3**:
+   - **Fáze A** — image upload (expo-image-picker + Supabase Storage) — nízkoriziková, půl dne
+   - **Brother PT-P710BT tisk** — závisí na nákupu tiskárny (~2500 Kč) + spárování v iOS
+   - **Claude Vision Edge Function** — vyžaduje `ANTHROPIC_API_KEY` v Supabase Secrets
 
-### Poslední session ukončena v:
+### Session 2026-04-13 — Sprint 2.5 UZAVŘEN ✅
+
+Kompletní refaktor UI vrstvy a technického základu:
+
+- **Fáze 1 Tech debt**: Expo SDK 51 → 55 (React 19, RN 0.83, Reanimated 4), ChipRow null-guards, žádný patch-package potřeba
+- **Fáze 2 Design system**: dark-first sage green paleta, typography/spacing/radius/shadows tokeny, `login-hero.png` + `screen-bg.png` generované přes PIL ze splash assetu, `<ScreenBackground>` wrapper aplikován na všech screens, native stack headery hidden + custom in-screen top bary
+- **Fáze 3 Icons**: 32 ikon generovaných přes nano banana (sage 3D styl), chroma key fix opacity (|R-G|+|G-B|+|R-B| threshold + smooth alpha), resize na 512×512 (~9.5 MB total), `Icon.tsx` wrapper s 32-ikonovým registry, nahrazeny všechny emoji napříč screens
+- **Fáze 4 Translation**: Category enum Czech→English + Unit ks→pcs/bal→pack, DB migrace idempotentní SQL script, všechny user-facing stringy přeloženy, `formatDateCs → formatDate`, date picker locale en-GB, default warehouse `Domácí sklad → Home`
+
+**Klíčová rozhodnutí této session**:
+- Dark mode across the whole app — gradient pozadí matching login screen
+- Icon style: sage monochrome 3D rendering, generované po jedné přes nano banana
+- DB rename Czech → English enums (migrace přes Supabase SQL editor)
+
+**Otevřené drobnosti** (non-blocking, můžou do Sprintu 3 nebo samostatně):
+- CZ komentáře v kódu (supabase.ts, některé screens) — postupně podle potřeby
+- iOS ActionSheetIOS emoji (🏷 ✏️ 🗑) ponecháno — system limitation
+- Role-aware UI (Sprint 4 territory)
+
+### Poslední session před Sprint 2.5 (archive):
 - **Stav**: Sprint 1 + 2 + všechny dodělávky kompletní, běží v iOS Simulator, schema.sql konsolidovaný
 - **Known issues**: žádné blokující, jen tech debt (viz sekce)
-- **Nejbližší next step**: Sprint 2.5 — začít Fází 1 (Expo SDK upgrade)
-
-### Aktuální session (2026-04-13):
-- Insertnutý **Sprint 2.5 – UI polish & tech debt** mezi Sprint 2 a Sprint 3
-- Rozhodnutí: UI přechází na angličtinu (změna konvence v `CLAUDE.md`)
-- Rozhodnutí: custom ikony generované přes nano banana místo vector icon libraries
-- Rozhodnutí: nejdřív tech debt (SDK upgrade), pak design system, pak ikony, až nakonec překlad

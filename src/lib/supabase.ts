@@ -89,17 +89,17 @@ export async function getMyWarehouse(userId: string): Promise<Warehouse | null> 
 export async function createWarehouse(_userId: string, name: string): Promise<Warehouse> {
   const { data, error } = await supabase.rpc('create_warehouse_for_me', { wh_name: name });
   if (error) throw error;
-  if (!data) throw new Error('Sklad nebyl vytvořen.');
+  if (!data) throw new Error('Warehouse was not created.');
   return data as Warehouse;
 }
 
 /**
- * Zajistí, že uživatel má sklad. Pokud ne, založí "Domácí sklad".
+ * Ensures the user has a warehouse. If not, creates "Home" as the default.
  */
 export async function ensureWarehouse(userId: string): Promise<Warehouse> {
   const existing = await getMyWarehouse(userId);
   if (existing) return existing;
-  return createWarehouse(userId, 'Domácí sklad');
+  return createWarehouse(userId, 'Home');
 }
 
 export async function listMembers(warehouseId: string): Promise<

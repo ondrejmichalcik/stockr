@@ -47,14 +47,14 @@ export default function LoginScreen() {
       });
 
       if (!credential.identityToken) {
-        throw new Error('Apple nevrátil identity token.');
+        throw new Error('Apple did not return an identity token.');
       }
 
       const { data, error } = await signInWithApple(credential.identityToken, rawNonce);
       if (error) throw error;
-      if (!data.session) throw new Error('Přihlášení se nezdařilo.');
+      if (!data.session) throw new Error('Sign in failed.');
 
-      // Aktualizuj display_name z Apple credential (jen při prvním přihlášení)
+      // Update display_name from Apple credential (only on first sign in)
       if (credential.fullName?.givenName) {
         const displayName = [credential.fullName.givenName, credential.fullName.familyName]
           .filter(Boolean)
@@ -65,35 +65,35 @@ export default function LoginScreen() {
           .eq('id', data.session.user.id);
       }
 
-      // Zajisti, že existuje sklad
+      // Ensure a warehouse exists for this user
       await ensureWarehouse(data.session.user.id);
     } catch (e: any) {
       if (e?.code === 'ERR_REQUEST_CANCELED') return;
-      Alert.alert('Chyba přihlášení', e?.message ?? 'Neznámá chyba');
+      Alert.alert('Sign in error', e?.message ?? 'Unknown error');
     } finally {
       setLoading(false);
     }
   };
 
   // --------------------------------------------------------------------------
-  // DEV ONLY: Email + Password login pro bypass Apple Sign In v simulátoru.
-  // V production buildu (__DEV__ === false) se tato sekce vůbec nerenderuje.
+  // DEV ONLY: Email + password login to bypass Apple Sign In in the simulator.
+  // This block is not rendered in production builds (__DEV__ === false).
   // --------------------------------------------------------------------------
   const handleDevLogin = async () => {
     const email = devEmail.trim();
     const password = devPassword;
     if (!email || !password) {
-      Alert.alert('Chybí údaje', 'Zadej email a heslo.');
+      Alert.alert('Missing credentials', 'Enter email and password.');
       return;
     }
     try {
       setDevLoading(true);
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      if (!data.session) throw new Error('Přihlášení se nezdařilo.');
+      if (!data.session) throw new Error('Sign in failed.');
       await ensureWarehouse(data.session.user.id);
     } catch (e: any) {
-      Alert.alert('Dev login selhal', e?.message ?? 'Neznámá chyba');
+      Alert.alert('Dev login failed', e?.message ?? 'Unknown error');
     } finally {
       setDevLoading(false);
     }
@@ -119,7 +119,7 @@ export default function LoginScreen() {
 
             <View style={styles.titleBlock}>
               <Text style={styles.title}>Stockr</Text>
-              <Text style={styles.subtitle}>Evidence nouzových zásob</Text>
+              <Text style={styles.subtitle}>Emergency supplies tracker</Text>
             </View>
 
             <View style={styles.footer}>
@@ -130,7 +130,7 @@ export default function LoginScreen() {
                 style={styles.appleBtn}
                 onPress={handleAppleSignIn}
               />
-              {loading && <Text style={styles.loading}>Přihlašuji…</Text>}
+              {loading && <Text style={styles.loading}>Signing in…</Text>}
 
               {__DEV__ && (
                 <View style={styles.devSection}>
@@ -154,7 +154,7 @@ export default function LoginScreen() {
                   <TextInput
                     value={devPassword}
                     onChangeText={setDevPassword}
-                    placeholder="heslo"
+                    placeholder="password"
                     placeholderTextColor={colors.heroTextSubtle}
                     style={styles.input}
                     secureTextEntry

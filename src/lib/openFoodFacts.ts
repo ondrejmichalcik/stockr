@@ -1,7 +1,7 @@
 // ============================================================================
 // Open Food Facts – EAN lookup
 // Docs: https://world.openfoodfacts.org/data
-// Zdarma, ~3M produktů, 85% hit rate pro potraviny v EU.
+// Free, ~3M products, ~85% hit rate for EU groceries.
 // ============================================================================
 import type { Category } from '@/src/types/database';
 
@@ -11,7 +11,7 @@ export interface OpenFoodFactsProduct {
   brand: string | null;
   category: Category | null;
   image_url: string | null;
-  quantity: string | null; // "500 g", "1 l" – raw text z OFF
+  quantity: string | null; // "500 g", "1 l" — raw text from OFF
 }
 
 interface OffApiResponse {
@@ -32,45 +32,45 @@ interface OffApiResponse {
 }
 
 /**
- * Heuristické mapování OFF kategorií na naše domain kategorie.
- * OFF category tag má tvar "en:dairy", "cs:nápoje", atd.
+ * Heuristic mapping of OFF category tags to our domain categories.
+ * OFF category tag has the form "en:dairy", "cs:nápoje", etc.
  */
 function mapCategory(tags: string[] | undefined): Category | null {
   if (!tags || tags.length === 0) return null;
   const joined = tags.join(' ').toLowerCase();
 
-  // Léky / drogerie
-  if (/medicine|pharmac|drug|medicament|lék|vitamin/.test(joined)) return 'léky';
+  // Medicine / drugstore
+  if (/medicine|pharmac|drug|medicament|lék|vitamin/.test(joined)) return 'medicine';
 
-  // Voda
-  if (/mineral-water|spring-water|drinking-water|water\b|voda/.test(joined)) return 'voda';
+  // Water
+  if (/mineral-water|spring-water|drinking-water|water\b|voda/.test(joined)) return 'water';
 
-  // Dezinfekce / hygiena
-  if (/disinfect|sanit|hygien|dezinf|cleaner|soap|mýdlo/.test(joined)) return 'dezinfekce';
+  // Disinfectant / hygiene
+  if (/disinfect|sanit|hygien|dezinf|cleaner|soap|mýdlo/.test(joined)) return 'disinfectant';
 
-  // Energie / baterie
-  if (/battery|baterie|energy-drink/.test(joined)) return 'energie';
+  // Energy / batteries
+  if (/battery|baterie|energy-drink/.test(joined)) return 'energy';
 
-  // Vše ostatní potravinové → potraviny
+  // Anything else food-related
   if (/food|beverage|dairy|meat|fish|vegetable|fruit|cereal|snack|bread|cheese|pasta|drink|juice|coffee|tea|potraviny|nápoj|pečivo|mléko|maso/.test(joined))
-    return 'potraviny';
+    return 'food';
 
   return null;
 }
 
 /**
- * Vybere nejlepší název – preferuje český, pak anglický, pak generický.
+ * Picks the best product name — prefers Czech, then English, then generic.
  */
 function pickName(p: NonNullable<OffApiResponse['product']>): string {
   const candidates = [p.product_name_cs, p.product_name, p.generic_name]
     .filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
-  return candidates[0]?.trim() ?? 'Neznámý produkt';
+  return candidates[0]?.trim() ?? 'Unknown product';
 }
 
 /**
- * Lookup produktu dle EAN/UPC kódu.
- * - Vrátí `null` pokud produkt v OFF není (status=0).
- * - Hodí error pouze při network failure.
+ * Lookup a product by EAN/UPC code.
+ * - Returns `null` if the product isn't in OFF (status=0).
+ * - Throws only on network failure.
  */
 export async function lookupByBarcode(barcode: string): Promise<OpenFoodFactsProduct | null> {
   const url = `https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`;
@@ -79,12 +79,12 @@ export async function lookupByBarcode(barcode: string): Promise<OpenFoodFactsPro
   try {
     response = await fetch(url, {
       headers: {
-        // OFF prosí o identifikaci klienta
+        // OFF asks clients to identify themselves
         'User-Agent': 'Stockr/1.0 (https://github.com/ondrejmichalcik/stockr)',
       },
     });
   } catch (e) {
-    throw new Error('Nelze se připojit k Open Food Facts.');
+    throw new Error('Cannot connect to Open Food Facts.');
   }
 
   if (!response.ok) {

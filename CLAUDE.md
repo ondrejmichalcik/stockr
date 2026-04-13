@@ -157,7 +157,7 @@ Sprint 2 přidal: `expo-camera`, `expo-haptics`, `expo-clipboard`, `@react-nativ
 ### 6. Sprint stav
 Vývoj běží po sprintech. Detailní stav → **[`.claude/implementation-plan.md`](.claude/implementation-plan.md)**
 
-Aktuálně: **Sprint 2 hotový.** Běží: Sprint 2.5 (UI polish & tech debt). Next: Sprint 3 (Brother tisk, Claude Vision, image upload).
+Aktuálně: **Sprint 2.5 uzavřen** (2026-04-13). Celá appka v angličtině, dark sage theme, 32 custom ikon, Expo SDK 55. Next: Sprint 3 (Brother tisk, Claude Vision, image upload).
 
 ---
 
