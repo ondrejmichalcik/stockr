@@ -413,23 +413,25 @@ Druhý, menší kus sprintu: **pack size** na items. Currently lze říct "2 pac
 - ⏳ Fallback: `expo-sharing` → share PNG QR přes iMessage/Mail/AirDrop
 - ❌ Niimbot BLE protokol — zrušeno, AirPrint cesta je robustnější
 
-### Claude Vision pro produkty bez EAN
-- ⏳ Supabase Edge Function `identify-product` (Deno)
-  - Input: base64 jpeg
-  - Volá Anthropic API se strukturovaným promptem
-  - Output: `{ name, category, typical_shelf_life_days }`
-- ⏳ `ANTHROPIC_API_KEY` v Supabase Secrets (dashboard)
-- ⏳ `src/lib/vision.ts` — klientská wrapper funkce `identifyProduct(imageUri)`
-- ⏳ V `add-items.tsx` přidat k "Přidat ručně" také "📸 Vyfotit produkt" tlačítko (když EAN 404 nebo žádný kód)
-- ⏳ Po úspěšné identifikaci: prefill draft + nahrát foto do Storage + navázat do `items.image_url`
+### Claude Vision pro produkty bez EAN ✅
+**Architektura pivotovala od Supabase Edge Function → direct client call s per-user API klíčem v SecureStore.** Důvody: nulový risk leaku v TestFlight binary, každý user si řídí vlastní útratu, simpler deploy (žádná Deno function). Claude Code subscription nejde použít — je vázaná na OAuth CLI, nemůže sloužit jako token pro mobile app.
+- ✅ `src/lib/secureStore.ts` — Keychain-backed helpers pro `stockr.anthropicKey`
+- ✅ `src/lib/vision.ts` — direct fetch na `api.anthropic.com/v1/messages`, model `claude-haiku-4-5`, tool_use pro structured output (`{ name, category, typical_shelf_life_days }`), `cache_control: ephemeral` na tool def pro 5-min prompt cache. `MissingApiKeyError`, `hasAnthropicKey()`, `formatShelfLife()`, `testAnthropicKey()` helpery
+- ✅ `app/(app)/profile.tsx` — nový global profile screen dostupný přes profile icon na Warehouses list. Email + display name + Claude Vision section (Set/Change/Test/Remove key s Alert.prompt a `sk-ant-` validation) + Sign out
+- ✅ **Path A (auto)**: OFF 404 v `add-items.tsx` → pokud má user klíč, alert "Product not in database. Take photo to identify?" → camera → upload → Claude → prefill name/category → shelf life hint + upsert `custom_products`
+- ✅ **Path B (manual button)**: "✨ Identify with AI" button (sage tint, sparkles icon) viditelný když `visionEnabled && draft.image_url`. Re-identifikuje na existing image URL bez dalšího uploadu.
+- ✅ Shelf life jako **hint** (ne auto-prefill datumu) — text "Typical shelf life: ~2 years — check the label" pod expiry picker, viditelný jen když datum není vyplněné
+- ✅ Caching: `upsertCustomProduct` s `typical_expiry_days` po úspěšné identifikaci. Další scan stejného EANu preskočí Claude call (custom_products prefill path) a z cached `typical_expiry_days` ukáže stejný hint
 
-### Upload obrázků do Supabase Storage (Fáze A — nízkoriziková)
+### Upload obrázků do Supabase Storage (Fáze A — nízkoriziková) ✅
 - ✅ Bucket `product-images` automaticky vytvořený přes schema.sql (public: true)
-- ⏳ `src/lib/storage.ts` — `uploadProductImage(warehouseId, base64) → url`
-- ⏳ Path convention: `{warehouse_id}/{timestamp}-{hash}.jpg`
-- ⏳ `expo-image-picker` + `expo-image-manipulator` pro resize + compress před uploadem
-- ⏳ Přidat do `add-items.tsx` a `ItemEditSheet`: tlačítko "📷 Vyfotit" / "🖼 Z galerie"
-- ⏳ Použít i v Claude Vision flow
+- ✅ Storage RLS policies: `product_images_read` (public select), `product_images_insert/update/delete` (authenticated-only)
+- ✅ `src/lib/storage.ts` — `uploadProductImage(warehouseId, localUri)` pipeline: `ImageManipulator` resize (800px width, 70% JPEG) → `new File().arrayBuffer()` (nový FS API místo broken `fetch+blob` v RN) → upload → `getPublicUrl`. Path convention: `{warehouse_id}/{timestamp}-{random}.jpg`. `deleteProductImage(publicUrl)` helper s safe no-op pro external URLs (OFF thumbnails se neřeší).
+- ✅ `expo-image-picker` + `expo-image-manipulator` + `expo-file-system` deps installed (native rebuild nutný)
+- ✅ `ItemEditSheet` — 160×160 thumbnail tile nahoře, tap → `ActionSheetIOS` (Take photo / Library / Remove). Upload overlay spinner. `warehouseId` prop pass-through z obou callers.
+- ✅ `add-items.tsx` form — 140×140 tile s category ikonou + "Tap to add photo" hint v empty state. `handleAddToQueue` blokuje Save during upload.
+- ✅ Reused v Claude Vision flow (Path A uses same upload pipeline)
+- ℹ️ Orphan cleanup v storage není — pokud user uploadne foto a pak draft cancelne, soubor zůstane. Acceptable MVP, fix v Sprint 5+.
 
 ### Custom products rozšíření
 - ✅ Upsert při přidání draftu se známým EAN — už je
@@ -653,11 +655,33 @@ eas submit --platform ios
 Po otevření nové session a prozkoumání stavu:
 
 1. **Zkontroluj, že Metro bundler naběhne a appka se spustí** — `npx expo start --dev-client` a v simulátoru reload
-2. **Potvrď, že DB migrace ze Sprintu 2.7 běží** — `warehouse_members` má `role` check `('owner','member')`, `items.opened` boolean + `items.pack_count` int existují, `open_one_item(uuid)` + `create_warehouse_for_me(text)` RPCs jsou registrované, trigger `warehouse_members_one_owner` enforcuje ≥1 owner
-3. **Rozhodni, co dál ze Sprintu 3**:
-   - **Fáze A** — image upload (expo-image-picker + Supabase Storage) — nízkoriziková, půl dne
-   - **Brother PT-P710BT tisk** — tiskárna **objednána** 2026-04-14, po doručení spárovat v iOS Settings → Bluetooth → prototyp `qrLabel.ts` HTML + `expo-print` AirPrint flow
-   - **Claude Vision Edge Function** — vyžaduje `ANTHROPIC_API_KEY` v Supabase Secrets
+2. **Potvrď, že DB migrace ze Sprintu 3A běží** — `storage.objects` má 4 policies pro `product-images` bucket (select/insert/update/delete), předchozí Sprint 2.7 RPCs + triggery nezměněny
+3. **Rozhodni, co dál**:
+   - **Brother PT-P710BT tisk** — tiskárna objednaná 2026-04-14, až dorazí: `qrLabel.ts` HTML template + `expo-print` AirPrint test. Prototyp HTML se dá připravit i bez hardware.
+   - **Sprint 4 (sdílení + notifikace)** — pozvánky už jsou z 2.7 hotové, zbývá push notifikace přes `expo-notifications` + Supabase Edge Function cron pro daily-expiry-check
+   - **TestFlight distribuce (Sprint 5)** — EAS build pipeline, real-device test s druhým Apple ID
+   - **Storage orphan cleanup** — nízká priorita, pokud začne být prostor problém
+
+### Session 2026-04-15 — Sprint 3A/B/C UZAVŘEN ✅
+
+Image upload pipeline + Claude Vision identifikace. Sprint 3 zbývá jen Brother tisk (waiting on hardware).
+
+- **Sprint 3A — Image upload do Storage**: `expo-image-picker` + `expo-image-manipulator` + `expo-file-system` installed. `src/lib/storage.ts` s upload pipeline používající **new File API** místo broken `fetch+blob` (classic RN gotcha — `fetch(uri).blob()` produkoval prázdný/bílý soubor). Resize 800px width + 70% JPEG = ~80–150 KB per image. Storage RLS policies na `storage.objects` (public select, authenticated writes). `ItemEditSheet` má thumbnail tile nahoře s `ActionSheetIOS` picker. `deleteProductImage` helper s safe no-op pro external (OFF) URLs.
+- **Sprint 3B — Picker v add-items.tsx**: stejný pattern jako ItemEditSheet, ale wrapuje existující image/placeholder v Pressable. Empty state má "Tap to add photo" hint + category ikonu. `handleAddToQueue` blokuje Save během uploadu.
+- **Sprint 3C — Claude Vision**: kompletní architektural pivot od původního plánu (Supabase Edge Function → direct client call s per-user key). Důvody a implementace viz Sprint 3 plan section výše. Path A (auto na OFF 404) + Path B (manual "✨ Identify with AI" button) + shelf life hint (ne prefill) + custom_products caching.
+
+**Klíčová rozhodnutí této session**:
+- **Per-device API klíč v SecureStore** je bezpečnější než shared Edge Function secret (nulový leak risk v TestFlight binary) a každý user platí svoje volání. Claude Code / Claude Pro subscription NELZE použít pro mobile API calls — je vázaná na OAuth CLI session.
+- **Haiku 4.5** jako default model (~$0.002 per identifikace, $0.20/měsíc pro typické použití), model je 1-řádkový swap na Sonnet pokud accuracy bude slabá.
+- **Shelf life jen jako hint**, ne auto-prefill datumu — user musí verifikovat obalový nápis. Claude returns typical_shelf_life_days, hint se zobrazí jen když datum není vyplněné.
+- **Prompt caching** na tool definition přes `cache_control: ephemeral` — šetří tokeny při batch scanningu v 5-min okně.
+- **`pack_count` + `formatItemQuantity`** jako finální shape pro "balení" UI — viz 2.7 session note. Sprint 3 nemění.
+- **`fetch(uri).blob()` v React Native je broken pro Supabase Storage upload** — pivot na `new File(uri).arrayBuffer()` (expo-file-system SDK 55+). Zaznamenávám pro budoucí gotchas.
+
+**Otevřené drobnosti** (non-blocking):
+- Orphan cleanup v storage (cancelled drafts s uploadedem foto). Defer.
+- `visionEnabled` se čte jen na mount v add-items — pokud user nastaví klíč mid-session na Profile a hned skočí scan, refresh neproběhne (screen je v různé stack entry). Acceptable; fix přidat `useFocusEffect`.
+- Brother tisk — zatím žádný HTML template, lze začít prototypovat i bez hardware.
 
 ### Session 2026-04-14 — Sprint 2.7 UZAVŘEN ✅
 

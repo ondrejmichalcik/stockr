@@ -175,7 +175,7 @@ Sprint 2 přidal: `expo-camera`, `expo-haptics`, `expo-clipboard`, `@react-nativ
 ### 6. Sprint stav
 Vývoj běží po sprintech. Detailní stav → **[`.claude/implementation-plan.md`](.claude/implementation-plan.md)**
 
-Aktuálně: **Sprint 2.7 uzavřen** (2026-04-14) — multi-warehouse flow (first-class resource, Warehouses list, create/rename/delete/leave, invite link s co-owner toggle, deep link s pending-invite persist), role-aware UI (multi-owner model, last-owner invariant DB trigger), per-item `opened` flag se split akcí (`open_one_item` RPC, swipe left + sheet button, merge do opened siblinga), optional `pack_count` pro pcs/pack labels ("10 pcs · 24/pack"). Sprint 2.6 (light NoWaste redesign) uzavřen. Next: **Sprint 3** (Brother PT-P710BT tisk — tiskárna objednána, Claude Vision, image upload do Storage).
+Aktuálně: **Sprint 3A/B/C uzavřen** (2026-04-15) — image upload pipeline (`expo-image-picker` + `expo-image-manipulator` + `expo-file-system` `new File().arrayBuffer()` místo broken `fetch+blob`), storage RLS policies, picker v `ItemEditSheet` + `add-items.tsx`, Claude Vision identifikace přes direct client call s per-device Anthropic API klíčem v `expo-secure-store` (bezpečnější než shared Edge Function secret, každý user platí svoje volání), nový `app/(app)/profile.tsx` global settings screen pro key mgmt, Path A (auto na OFF 404) + Path B (manual "✨ Identify with AI" button), shelf life hint pod expiry pickerem (ne prefill), caching do `custom_products.typical_expiry_days`. Sprint 2.7 uzavřen (multi-warehouse). Next: **Brother PT-P710BT tisk** (tiskárna objednána, čekáme na doručení — prototyp HTML lze připravit i bez hardware), nebo Sprint 4 (push notifikace).
 
 ---
 
