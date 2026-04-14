@@ -4,6 +4,7 @@
 // ============================================================================
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Animated,
@@ -23,12 +24,20 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import {
   addItemsBatch,
   findCustomProduct,
   supabase,
   upsertCustomProduct,
 } from '@/src/lib/supabase';
+import { deleteProductImage, uploadProductImage } from '@/src/lib/storage';
+import {
+  formatShelfLife,
+  hasAnthropicKey,
+  identifyProduct,
+  MissingApiKeyError,
+} from '@/src/lib/vision';
 import { lookupByBarcode } from '@/src/lib/openFoodFacts';
 import {
   CATEGORIES,
@@ -99,6 +108,22 @@ export default function AddItemsScreen() {
   // Torch toggle
   const [torch, setTorch] = useState(false);
 
+  // Image upload state — blocks Save while a picked photo is still uploading
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  // Claude Vision state: gate UI by key presence + track in-flight identify
+  // calls + surface a shelf-life hint below the expiry picker when Claude
+  // suggested one.
+  const [visionEnabled, setVisionEnabled] = useState(false);
+  const [identifying, setIdentifying] = useState(false);
+  const [shelfLifeDaysHint, setShelfLifeDaysHint] = useState<number | null>(null);
+
+  // Probe for the API key once on mount. Refresh if the user comes back
+  // from Profile after setting/removing a key mid-session.
+  useEffect(() => {
+    hasAnthropicKey().then(setVisionEnabled).catch(() => {});
+  }, []);
+
   // Toast shown after an item is added to the queue
   const [toast, setToast] = useState<string | null>(null);
   const toastOpacity = useRef(new Animated.Value(0)).current;
@@ -142,6 +167,9 @@ export default function AddItemsScreen() {
           pack_count: null,
         });
         setDraftSource('custom');
+        // Surface the cached Claude shelf-life hint (if any) so the user
+        // gets the same context as on first identification.
+        setShelfLifeDaysHint(custom.typical_expiry_days);
         Haptics.selectionAsync();
         setMode('form');
         return;
@@ -161,12 +189,16 @@ export default function AddItemsScreen() {
           pack_count: null,
         });
         setDraftSource('off');
+        setShelfLifeDaysHint(null);
         Haptics.selectionAsync();
         setMode('form');
         return;
       }
 
       // 3. Fallback — manual entry (OFF 404)
+      // Set up the empty manual draft first, then (optionally) offer AI
+      // identification. If the user accepts, we kick off the camera →
+      // upload → Claude flow below; otherwise they keep the blank form.
       setDraft({
         name: '',
         quantity: 1,
@@ -178,8 +210,25 @@ export default function AddItemsScreen() {
         pack_count: null,
       });
       setDraftSource('manual');
+      setShelfLifeDaysHint(null);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       setMode('form');
+
+      if (visionEnabled) {
+        Alert.alert(
+          'Product not in database',
+          'Would you like to identify it with Claude Vision? You can take a photo and AI will suggest the name and category.',
+          [
+            { text: 'Add manually', style: 'cancel' },
+            {
+              text: 'Take photo',
+              onPress: () => {
+                runVisionFromCamera(barcode).catch(() => {});
+              },
+            },
+          ],
+        );
+      }
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Cannot load product.');
       lastBarcodeRef.current = null;
@@ -203,6 +252,7 @@ export default function AddItemsScreen() {
       pack_count: null,
     });
     setDraftSource('manual');
+    setShelfLifeDaysHint(null);
     setMode('form');
   };
 
@@ -220,10 +270,205 @@ export default function AddItemsScreen() {
   };
 
   // --------------------------------------------------------------
+  // Image picker — attach a photo to the draft before adding to queue
+  // --------------------------------------------------------------
+  const runImageUpload = async (localUri: string) => {
+    if (!warehouseId || !draft) return;
+    try {
+      setUploadingImage(true);
+      const previousUrl = draft.image_url ?? null;
+      const newUrl = await uploadProductImage(warehouseId, localUri);
+      setDraft((d) => (d ? { ...d, image_url: newUrl } : d));
+      // Fire-and-forget: if the previous URL was one we uploaded this
+      // session, clean it up. `deleteProductImage` safely no-ops on
+      // external URLs (OFF thumbnails, custom_products cached URLs).
+      if (previousUrl) {
+        deleteProductImage(previousUrl).catch(() => {});
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message ?? 'Cannot upload image.');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Camera access needed', 'Enable camera access in iOS Settings.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 1,
+      mediaTypes: ['images'],
+    });
+    if (result.canceled || !result.assets[0]) return;
+    await runImageUpload(result.assets[0].uri);
+  };
+
+  const handlePickFromLibrary = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Photo library access needed', 'Enable photo library access in iOS Settings.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      quality: 1,
+      mediaTypes: ['images'],
+    });
+    if (result.canceled || !result.assets[0]) return;
+    await runImageUpload(result.assets[0].uri);
+  };
+
+  const handleRemoveImage = () => {
+    if (!draft) return;
+    const current = draft.image_url ?? null;
+    setDraft((d) => (d ? { ...d, image_url: null } : d));
+    if (current) {
+      deleteProductImage(current).catch(() => {});
+    }
+  };
+
+  // --------------------------------------------------------------
+  // Claude Vision — identify from image
+  // --------------------------------------------------------------
+
+  /** Shared post-identify handler: merges result into the draft, sets the
+   *  shelf-life hint, and caches the product for future scans. */
+  const applyIdentifyResult = async (
+    result: { name: string; category: Category; typical_shelf_life_days: number },
+    opts: { barcode: string | null; imageUrl: string },
+  ) => {
+    setDraft((d) => {
+      if (!d) return d;
+      return {
+        ...d,
+        name: result.name,
+        category: result.category,
+        image_url: opts.imageUrl,
+      };
+    });
+    setShelfLifeDaysHint(result.typical_shelf_life_days);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+    // Cache to custom_products so the next scan of the same barcode
+    // prefills without another Claude call.
+    if (opts.barcode && warehouseId) {
+      try {
+        const { data: sess } = await supabase.auth.getSession();
+        const userId = sess.session?.user.id;
+        if (userId) {
+          await upsertCustomProduct({
+            warehouse_id: warehouseId,
+            barcode: opts.barcode,
+            name: result.name,
+            category: result.category,
+            image_url: opts.imageUrl,
+            typical_expiry_days: result.typical_shelf_life_days,
+            created_by: userId,
+          });
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+  };
+
+  /** Path A: user accepted "Take photo to identify" after OFF 404. Opens
+   *  the camera, uploads, then calls Claude. */
+  const runVisionFromCamera = async (barcode: string) => {
+    if (!warehouseId) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Camera access needed', 'Enable camera access in iOS Settings.');
+      return;
+    }
+    const picker = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 1,
+      mediaTypes: ['images'],
+    });
+    if (picker.canceled || !picker.assets[0]) return;
+
+    try {
+      setUploadingImage(true);
+      const url = await uploadProductImage(warehouseId, picker.assets[0].uri);
+      setDraft((d) => (d ? { ...d, image_url: url } : d));
+      setUploadingImage(false);
+
+      setIdentifying(true);
+      const result = await identifyProduct(url);
+      await applyIdentifyResult(result, { barcode, imageUrl: url });
+    } catch (e: any) {
+      if (e instanceof MissingApiKeyError) {
+        Alert.alert('Not configured', e.message);
+      } else {
+        Alert.alert('Identification failed', e?.message ?? 'Unknown error.');
+      }
+    } finally {
+      setUploadingImage(false);
+      setIdentifying(false);
+    }
+  };
+
+  /** Path B: user has a photo on the draft and taps "Identify with AI"
+   *  button to (re-)identify. Uses the existing image_url, no new upload. */
+  const handleIdentifyAI = async () => {
+    if (!draft?.image_url) return;
+    try {
+      setIdentifying(true);
+      const result = await identifyProduct(draft.image_url);
+      await applyIdentifyResult(result, {
+        barcode: draft.barcode ?? null,
+        imageUrl: draft.image_url,
+      });
+    } catch (e: any) {
+      if (e instanceof MissingApiKeyError) {
+        Alert.alert('Not configured', e.message);
+      } else {
+        Alert.alert('Identification failed', e?.message ?? 'Unknown error.');
+      }
+    } finally {
+      setIdentifying(false);
+    }
+  };
+
+  const showImagePicker = () => {
+    if (uploadingImage || !draft) return;
+    const hasImage = draft.image_url != null;
+    const options = hasImage
+      ? ['Take photo', 'Choose from library', 'Remove photo', 'Cancel']
+      : ['Take photo', 'Choose from library', 'Cancel'];
+    const removeIdx = hasImage ? 2 : -1;
+    const cancelIdx = options.length - 1;
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options,
+        destructiveButtonIndex: removeIdx >= 0 ? removeIdx : undefined,
+        cancelButtonIndex: cancelIdx,
+        title: 'Item photo',
+      },
+      (idx) => {
+        if (idx === 0) handleTakePhoto();
+        else if (idx === 1) handlePickFromLibrary();
+        else if (idx === removeIdx) handleRemoveImage();
+      },
+    );
+  };
+
+  // --------------------------------------------------------------
   // Add the current draft into the queue
   // --------------------------------------------------------------
   const handleAddToQueue = async () => {
     if (!draft) return;
+    if (uploadingImage) {
+      Alert.alert('Photo uploading', 'Please wait for the photo upload to finish.');
+      return;
+    }
     const { name, quantity, unit, expiry_date } = draft;
     if (!name?.trim()) {
       Alert.alert('Name required', 'Enter a product name.');
@@ -280,6 +525,7 @@ export default function AddItemsScreen() {
     setDraft(null);
     setDraftSource(null);
     setShowDatePicker(false);
+    setShelfLifeDaysHint(null);
     lastBarcodeRef.current = null;
     setMode('scan');
   };
@@ -416,19 +662,52 @@ export default function AddItemsScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <ScrollView contentContainerStyle={styles.formScroll} keyboardShouldPersistTaps="handled">
-            {draft.image_url ? (
-              <Image source={{ uri: draft.image_url }} style={styles.draftImage} />
-            ) : (
-              <View style={styles.draftImagePlaceholder}>
-                <Icon
-                  sf={draft.category ? CATEGORY_SF[draft.category] : 'shippingbox.fill'}
-                  size={56}
-                  color={colors.textMuted}
-                />
-              </View>
-            )}
+            <Pressable
+              onPress={showImagePicker}
+              disabled={uploadingImage}
+              style={({ pressed }) => [styles.draftImageTile, pressed && { opacity: 0.7 }]}
+            >
+              {draft.image_url ? (
+                <Image source={{ uri: draft.image_url }} style={styles.draftImage} />
+              ) : (
+                <View style={styles.draftImagePlaceholder}>
+                  <Icon
+                    sf={draft.category ? CATEGORY_SF[draft.category] : 'camera.fill'}
+                    size={48}
+                    color={colors.textMuted}
+                  />
+                  <Text style={styles.draftImageHint}>Tap to add photo</Text>
+                </View>
+              )}
+              {uploadingImage && (
+                <View style={styles.draftImageOverlay}>
+                  <ActivityIndicator color="#FFFFFF" />
+                </View>
+              )}
+            </Pressable>
 
             <SourceBanner source={draftSource} barcode={draft.barcode ?? null} />
+
+            {visionEnabled && draft.image_url && !uploadingImage && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.identifyBtn,
+                  identifying && { opacity: 0.6 },
+                  pressed && !identifying && { opacity: 0.7 },
+                ]}
+                onPress={handleIdentifyAI}
+                disabled={identifying}
+              >
+                {identifying ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <>
+                    <Icon sf="sparkles" size={16} color={colors.primary} />
+                    <Text style={styles.identifyBtnText}>Identify with AI</Text>
+                  </>
+                )}
+              </Pressable>
+            )}
 
             <Text style={styles.label}>Name</Text>
             <TextInput
@@ -496,6 +775,11 @@ export default function AddItemsScreen() {
                 color={colors.textMuted}
               />
             </Pressable>
+            {shelfLifeDaysHint != null && !draft.expiry_date && (
+              <Text style={styles.shelfLifeHint}>
+                Typical shelf life: ~{formatShelfLife(shelfLifeDaysHint)} — check the label.
+              </Text>
+            )}
             {showDatePicker && (
               <View style={styles.datePickerWrap}>
                 <DateTimePicker
@@ -538,6 +822,7 @@ export default function AddItemsScreen() {
                 setDraft(null);
                 setDraftSource(null);
                 setShowDatePicker(false);
+                setShelfLifeDaysHint(null);
                 lastBarcodeRef.current = null;
                 setMode('scan');
               }}
@@ -810,26 +1095,63 @@ const styles = StyleSheet.create({
   },
   // Form
   formScroll: { padding: spacing.lg, gap: spacing.xs },
-  draftImage: {
-    width: 120,
-    height: 120,
-    borderRadius: radius.md,
+  draftImageTile: {
     alignSelf: 'center',
-    marginBottom: spacing.sm,
-    backgroundColor: colors.surface,
-    resizeMode: 'contain',
-  },
-  draftImagePlaceholder: {
-    width: 120,
-    height: 120,
+    width: 140,
+    height: 140,
     borderRadius: radius.md,
-    alignSelf: 'center',
     marginBottom: spacing.sm,
+    overflow: 'hidden',
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadows.sm,
+  },
+  draftImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  draftImagePlaceholder: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: spacing.xs + 2,
+  },
+  draftImageHint: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  draftImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  identifyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primaryTint,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primarySubtle,
+    paddingVertical: spacing.md,
+    marginTop: spacing.sm,
+  },
+  identifyBtnText: {
+    ...typography.subhead,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+  shelfLifeHint: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    marginTop: spacing.xs,
+    marginLeft: spacing.xs,
   },
   label: {
     ...typography.label,

@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -20,7 +19,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   getMyWarehouses,
-  signOut,
   subscribeMyWarehouses,
   supabase,
 } from '@/src/lib/supabase';
@@ -34,7 +32,6 @@ export default function WarehousesListScreen() {
   const router = useRouter();
   const [warehouses, setWarehouses] = useState<WarehouseWithRole[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +39,6 @@ export default function WarehousesListScreen() {
     const { data: sess } = await supabase.auth.getSession();
     const uid = sess.session?.user.id ?? null;
     setUserId(uid);
-    setUserEmail(sess.session?.user.email ?? null);
     if (!uid) return;
     const list = await getMyWarehouses(uid);
     setWarehouses(list);
@@ -68,21 +64,8 @@ export default function WarehousesListScreen() {
     return unsubscribe;
   }, [userId]);
 
-  const showProfileMenu = () => {
-    Alert.alert(
-      userEmail ? `Signed in as ${userEmail}` : 'Account',
-      undefined,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign out',
-          style: 'destructive',
-          onPress: () => {
-            signOut().catch(() => {});
-          },
-        },
-      ],
-    );
+  const openProfile = () => {
+    router.push('/profile' as any);
   };
 
   if (loading) {
@@ -110,9 +93,9 @@ export default function WarehousesListScreen() {
         <Text style={styles.title}>Warehouses</Text>
         <Pressable
           hitSlop={12}
-          onPress={showProfileMenu}
+          onPress={openProfile}
           style={({ pressed }) => [styles.profileBtn, pressed && { opacity: 0.5 }]}
-          accessibilityLabel="Account menu"
+          accessibilityLabel="Profile"
         >
           <Icon sf="person.crop.circle" size={32} color={colors.text} />
         </Pressable>

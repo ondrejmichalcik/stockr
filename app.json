@@ -17,10 +17,11 @@
       "bundleIdentifier": "com.ondrejmichalcik.stockr",
       "usesAppleSignIn": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Stockr potřebuje přístup k fotoaparátu pro skenování QR kódů a čárových kódů produktů.",
-        "NSPhotoLibraryUsageDescription": "Stockr potřebuje přístup k fotkám pro přidání obrázků produktů.",
-        "NSBluetoothAlwaysUsageDescription": "Stockr potřebuje Bluetooth pro tisk QR štítků na Niimbot B21.",
-        "NSBluetoothPeripheralUsageDescription": "Stockr používá Bluetooth pro komunikaci s tiskárnou štítků."
+        "NSCameraUsageDescription": "Stockr uses the camera to scan box QR codes and product barcodes, and to take photos of items.",
+        "NSPhotoLibraryUsageDescription": "Stockr uses your photo library to attach product images to items.",
+        "NSPhotoLibraryAddUsageDescription": "Stockr saves item photos to your library.",
+        "NSBluetoothAlwaysUsageDescription": "Stockr uses Bluetooth to print QR labels on the Brother label printer.",
+        "NSBluetoothPeripheralUsageDescription": "Stockr uses Bluetooth to communicate with the label printer."
       },
       "associatedDomains": []
     },
@@ -31,7 +32,14 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Stockr potřebuje přístup k fotoaparátu pro skenování QR kódů beden a čárových kódů produktů."
+          "cameraPermission": "Stockr uses the camera to scan box QR codes, product barcodes, and take item photos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Stockr uses your photo library to attach product images to items.",
+          "cameraPermission": "Stockr uses the camera to take item photos."
         }
       ]
     ],

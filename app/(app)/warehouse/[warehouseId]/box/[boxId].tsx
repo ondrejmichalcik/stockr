@@ -453,9 +453,10 @@ export default function BoxDetailScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setEditingItem(null)}
       >
-        {editingItem && (
+        {editingItem && warehouseId && (
           <ItemEditSheet
             item={editingItem}
+            warehouseId={warehouseId}
             onClose={() => setEditingItem(null)}
             onSaved={(updated) => {
               setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));

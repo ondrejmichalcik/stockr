@@ -199,9 +199,10 @@ export default function ItemsScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setEditingItem(null)}
       >
-        {editingItem && (
+        {editingItem && warehouseId && (
           <ItemEditSheet
             item={editingItem}
+            warehouseId={warehouseId}
             onClose={() => setEditingItem(null)}
             onSaved={(updated) => {
               setItems((prev) =>

@@ -590,3 +590,27 @@ end $$;
 insert into storage.buckets (id, name, public)
 values ('product-images', 'product-images', true)
 on conflict (id) do nothing;
+
+-- Storage RLS: public reads (bucket is public, so this is a no-op on
+-- select). Writes (insert / update / delete) require an authenticated
+-- user. We intentionally don't enforce path-based warehouse membership
+-- here — the client always writes under `{warehouseId}/...` and
+-- RLS-protected DB tables already gate which warehouses the client can
+-- touch. Good enough for MVP; tighten later if needed.
+
+drop policy if exists product_images_read on storage.objects;
+create policy product_images_read on storage.objects for select
+  using (bucket_id = 'product-images');
+
+drop policy if exists product_images_insert on storage.objects;
+create policy product_images_insert on storage.objects for insert
+  with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+
+drop policy if exists product_images_update on storage.objects;
+create policy product_images_update on storage.objects for update
+  using (bucket_id = 'product-images' and auth.role() = 'authenticated')
+  with check (bucket_id = 'product-images' and auth.role() = 'authenticated');
+
+drop policy if exists product_images_delete on storage.objects;
+create policy product_images_delete on storage.objects for delete
+  using (bucket_id = 'product-images' and auth.role() = 'authenticated');

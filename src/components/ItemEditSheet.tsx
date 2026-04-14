@@ -4,8 +4,10 @@
 // ============================================================================
 import { useEffect, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,7 +20,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { deleteItem, openOneItem, updateItem } from '@/src/lib/supabase';
+import { deleteProductImage, uploadProductImage } from '@/src/lib/storage';
 import {
   CATEGORIES,
   UNITS,
@@ -32,6 +36,8 @@ import { Icon } from '@/src/components/Icon';
 
 export interface ItemEditSheetProps {
   item: Item;
+  /** Warehouse context for image uploads (path is `{warehouseId}/...`). */
+  warehouseId: string;
   onClose: () => void;
   onSaved: (updated: Item) => void;
   onDeleted: (itemId: string) => void;
@@ -52,10 +58,12 @@ interface Draft {
   expiry_date: string | null;
   category: Category | null;
   pack_count: number | null;
+  image_url: string | null;
 }
 
 export function ItemEditSheet({
   item,
+  warehouseId,
   onClose,
   onSaved,
   onDeleted,
@@ -68,9 +76,11 @@ export function ItemEditSheet({
     expiry_date: item.expiry_date,
     category: item.category,
     pack_count: item.pack_count,
+    image_url: item.image_url,
   });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [quantityText, setQuantityText] = useState(
     Number.isInteger(item.quantity) ? String(item.quantity) : item.quantity.toString(),
   );
@@ -87,6 +97,7 @@ export function ItemEditSheet({
       expiry_date: item.expiry_date,
       category: item.category,
       pack_count: item.pack_count,
+      image_url: item.image_url,
     });
     setQuantityText(
       Number.isInteger(item.quantity) ? String(item.quantity) : item.quantity.toString(),
@@ -100,6 +111,92 @@ export function ItemEditSheet({
   // re-opened.
   const canOpen =
     !item.opened && (item.unit === 'pcs' || item.unit === 'pack') && item.quantity >= 1;
+
+  // ---- Image picker flow --------------------------------------------------
+
+  const runImageUpload = async (localUri: string) => {
+    try {
+      setUploadingImage(true);
+      const previousUrl = draft.image_url;
+      const newUrl = await uploadProductImage(warehouseId, localUri);
+      setDraft((d) => ({ ...d, image_url: newUrl }));
+      // Fire-and-forget: remove the old one. Errors here are non-fatal.
+      if (previousUrl && previousUrl !== item.image_url) {
+        deleteProductImage(previousUrl).catch(() => {});
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (e: any) {
+      Alert.alert('Upload failed', e?.message ?? 'Cannot upload image.');
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Camera access needed', 'Enable camera access in iOS Settings.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 1,
+      mediaTypes: ['images'],
+    });
+    if (result.canceled || !result.assets[0]) return;
+    await runImageUpload(result.assets[0].uri);
+  };
+
+  const handlePickFromLibrary = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Photo library access needed', 'Enable photo library access in iOS Settings.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      quality: 1,
+      mediaTypes: ['images'],
+    });
+    if (result.canceled || !result.assets[0]) return;
+    await runImageUpload(result.assets[0].uri);
+  };
+
+  const handleRemoveImage = () => {
+    const current = draft.image_url;
+    if (!current) return;
+    setDraft((d) => ({ ...d, image_url: null }));
+    // Only delete from storage if it was a freshly uploaded one we own.
+    // For images that came with the DB row (e.g. from OFF), we leave the
+    // remote file alone — they may belong to another item or a CDN.
+    if (current !== item.image_url) {
+      deleteProductImage(current).catch(() => {});
+    }
+  };
+
+  const showImagePicker = () => {
+    if (uploadingImage) return;
+    const hasImage = draft.image_url != null;
+    const options = hasImage
+      ? ['Take photo', 'Choose from library', 'Remove photo', 'Cancel']
+      : ['Take photo', 'Choose from library', 'Cancel'];
+    const removeIdx = hasImage ? 2 : -1;
+    const cancelIdx = options.length - 1;
+
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options,
+        destructiveButtonIndex: removeIdx >= 0 ? removeIdx : undefined,
+        cancelButtonIndex: cancelIdx,
+        title: 'Item photo',
+      },
+      (idx) => {
+        if (idx === 0) handleTakePhoto();
+        else if (idx === 1) handlePickFromLibrary();
+        else if (idx === removeIdx) handleRemoveImage();
+      },
+    );
+  };
 
   const handleMarkOpened = () => {
     Alert.alert(
@@ -173,6 +270,7 @@ export function ItemEditSheet({
         expiry_date: draft.expiry_date ?? null,
         category: draft.category,
         pack_count: packCount,
+        image_url: draft.image_url,
       });
       onSaved(updated);
     } catch (e: any) {
@@ -203,6 +301,26 @@ export function ItemEditSheet({
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <Pressable
+            onPress={showImagePicker}
+            disabled={uploadingImage || saving}
+            style={({ pressed }) => [styles.imageTile, pressed && { opacity: 0.7 }]}
+          >
+            {draft.image_url ? (
+              <Image source={{ uri: draft.image_url }} style={styles.imagePreview} />
+            ) : (
+              <View style={styles.imagePlaceholder}>
+                <Icon sf="camera.fill" size={32} color={colors.textMuted} />
+                <Text style={styles.imagePlaceholderText}>Add photo</Text>
+              </View>
+            )}
+            {uploadingImage && (
+              <View style={styles.imageOverlay}>
+                <ActivityIndicator color="#FFFFFF" />
+              </View>
+            )}
+          </Pressable>
+
           <Text style={styles.label}>Name</Text>
           <TextInput
             value={draft.name}
@@ -389,6 +507,41 @@ const styles = StyleSheet.create({
   },
   headerBtnPrimary: { fontWeight: '700' },
   scroll: { padding: spacing.lg, gap: spacing.xs },
+  imageTile: {
+    alignSelf: 'center',
+    width: 160,
+    height: 160,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    overflow: 'hidden',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  imagePreview: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  imagePlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs + 2,
+  },
+  imagePlaceholderText: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  imageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   label: {
     ...typography.label,
     color: colors.textMuted,
