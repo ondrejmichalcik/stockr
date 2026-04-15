@@ -39,7 +39,11 @@ import {
   openOneItem,
   subscribeItems,
 } from '@/src/lib/supabase';
-import { printBoxLabel, shareBoxLabelPdf } from '@/src/lib/qrLabel';
+import {
+  printBoxLabel,
+  printBoxLabelViaBrotherSDK,
+  shareBoxLabelPdf,
+} from '@/src/lib/qrLabel';
 import type { Box, Item, Category } from '@/src/types/database';
 import {
   EXPIRY_COLORS,
@@ -524,6 +528,18 @@ function LabelModalContent({ box, onClose }: { box: Box; onClose: () => void }) 
     }
   };
 
+  const handlePrintDirect = async () => {
+    try {
+      setPrinting(true);
+      await printBoxLabelViaBrotherSDK(box);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (e: any) {
+      Alert.alert('Brother print error', e?.message ?? 'Cannot print via Brother SDK.');
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.modalHeader}>
@@ -588,17 +604,30 @@ function LabelModalContent({ box, onClose }: { box: Box; onClose: () => void }) 
             printing && { opacity: 0.6 },
             pressed && !printing && { opacity: 0.7 },
           ]}
-          onPress={handlePrint}
+          onPress={handlePrintDirect}
           disabled={printing}
         >
           {printing ? (
             <ActivityIndicator color={colors.primary} />
           ) : (
             <>
-              <Icon sf="printer" size={18} color={colors.primary} />
-              <Text style={styles.printBtnText}>Print label</Text>
+              <Icon sf="printer.fill" size={18} color={colors.primary} />
+              <Text style={styles.printBtnText}>Print to Brother</Text>
             </>
           )}
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.sharePdfBtn,
+            printing && { opacity: 0.6 },
+            pressed && !printing && { opacity: 0.7 },
+          ]}
+          onPress={handlePrint}
+          disabled={printing}
+        >
+          <Icon sf="printer" size={16} color={colors.textMuted} />
+          <Text style={styles.sharePdfBtnText}>AirPrint / other</Text>
         </Pressable>
 
         <Pressable

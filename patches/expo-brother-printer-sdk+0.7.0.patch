@@ -1,0 +1,90 @@
+diff --git a/node_modules/expo-brother-printer-sdk/ios/SettingsUtils.swift b/node_modules/expo-brother-printer-sdk/ios/SettingsUtils.swift
+index fab4903..bc9c5b9 100644
+--- a/node_modules/expo-brother-printer-sdk/ios/SettingsUtils.swift
++++ b/node_modules/expo-brother-printer-sdk/ios/SettingsUtils.swift
+@@ -4,6 +4,10 @@
+ //
+ //  Created by Rakesh Ayyaswami on 23/9/2024.
+ //
++//  Stockr patch (2026-04-15): added PT (P-touch) series support so we
++//  can print to PT-P710BT over Bluetooth. See BRLMPTPrintSettings.h
++//  for PT-specific settings.
++//
+ 
+ import BRLMPrinterKit
+ 
+@@ -12,6 +16,7 @@ internal class SettingsUtils {
+ 
+     private static func _printerModelFromName(_ name: String) throws -> BRLMPrinterModel {
+         switch name {
++        // QL series
+         case "QL-710W":    return .QL_710W
+         case "QL-720NW":   return .QL_720NW
+         case "QL-810W":    return .QL_810W
+@@ -19,6 +24,25 @@ internal class SettingsUtils {
+         case "QL-1110NWB": return .QL_1110NWB
+         case "QL-1115NWB": return .QL_1115NWB
+ 
++        // PT (P-touch) series — added by stockr patch
++        case "PT-P710BT":  return .PT_P710BT
++        case "PT-P715eBT": return .pt_P715eBT
++        case "PT-P910BT":  return .PT_P910BT
++        case "PT-P300BT":  return .PT_P300BT
++        case "PT-P750W":   return .PT_P750W
++        case "PT-P900W":   return .PT_P900W
++        case "PT-P950NW":  return .PT_P950NW
++        case "PT-E550W":   return .PT_E550W
++        case "PT-E800W":   return .PT_E800W
++        case "PT-E850TKW": return .PT_E850TKW
++        case "PT-D800W":   return .PT_D800W
++        case "PT-D410":    return .PT_D410
++        case "PT-D460BT":  return .PT_D460BT
++        case "PT-D610BT":  return .PT_D610BT
++        case "PT-E310BT":  return .PT_E310BT
++        case "PT-E510":    return .PT_E510
++        case "PT-E560BT":  return .PT_E560BT
++
+         default:
+             throw GenericError(description: "Unsupported printer model")
+         }
+@@ -41,6 +65,30 @@ internal class SettingsUtils {
+         return settings
+     }
+ 
++    /// Parse PT (P-touch) series settings. Added by stockr patch so we can
++    /// print to PT-P710BT over Bluetooth. The PT series uses TZe laminated
++    /// tape (labelSize enum values 0..5 cover 3.5mm..24mm widths; index 5
++    /// = BRLMPTPrintSettingsLabelSizeWidth24mm, which is what PT-P710BT
++    /// accepts when loaded with 24mm TZe tape).
++    private static func _parseSettings_PTSeries(_ reader: DictionaryReadWrite, model: BRLMPrinterModel) throws -> BRLMPTPrintSettings {
++        guard let settings = BRLMPTPrintSettings(defaultPrintSettingsWith: model) else {
++            throw GenericError(description: "Failed to initialize PT printer settings object")
++        }
++
++        settings.labelSize               = reader.read("labelSize",               nvl: settings.labelSize) { BRLMPTPrintSettingsLabelSize(rawValue: $0) }
++        settings.autoCutForEachPageCount = reader.read("autoCutForEachPageCount", nvl: 1)
++        settings.autoCut                 = reader.read("autoCut",                 nvl: true)
++        settings.halfCut                 = reader.read("halfCut",                 nvl: false)
++        settings.chainPrint              = reader.read("chainPrint",              nvl: false)
++        settings.specialTapePrint        = reader.read("specialTapePrint",        nvl: false)
++        settings.cutmarkPrint            = reader.read("cutmarkPrint",            nvl: false)
++        settings.cutPause                = reader.read("cutPause",                nvl: false)
++        settings.forceVanishingMargin    = reader.read("forceVanishingMargin",    nvl: false)
++        settings.resolution              = reader.read("resolution",              nvl: .normal) { BRLMPrintSettingsResolution(rawValue: $0) }
++
++        return settings
++    }
++
+     internal static func settingsFromDictionary(_ settings: [String: Any], modelName: String) throws  -> BRLMPrintSettingsProtocol {
+ 
+         // decode supported model from name
+@@ -51,6 +99,9 @@ internal class SettingsUtils {
+         if  modelName.hasPrefix("QL") {
+             return try _parseSettings_QLSeries(reader, model: model)
+         }
++        if  modelName.hasPrefix("PT") {
++            return try _parseSettings_PTSeries(reader, model: model)
++        }
+ 
+         // unknown model
+         throw GenericError(description: "Unsupported printer model")

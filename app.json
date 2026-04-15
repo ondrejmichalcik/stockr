@@ -15,13 +15,15 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.ondrejmichalcik.stockr",
+      "buildNumber": "1",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Stockr uses the camera to scan box QR codes and product barcodes, and to take photos of items.",
         "NSPhotoLibraryUsageDescription": "Stockr uses your photo library to attach product images to items.",
         "NSPhotoLibraryAddUsageDescription": "Stockr saves item photos to your library.",
         "NSBluetoothAlwaysUsageDescription": "Stockr uses Bluetooth to print QR labels on the Brother label printer.",
-        "NSBluetoothPeripheralUsageDescription": "Stockr uses Bluetooth to communicate with the label printer."
+        "NSBluetoothPeripheralUsageDescription": "Stockr uses Bluetooth to communicate with the label printer.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "associatedDomains": []
     },
@@ -42,7 +44,9 @@
           "cameraPermission": "Stockr uses the camera to take item photos."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-brother-printer-sdk",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
@@ -50,7 +54,23 @@
     "extra": {
       "router": {
         "origin": false
+      },
+      "eas": {
+        "projectId": "6bbb7a4b-68d2-423f-9832-a070ff1fa99e"
       }
+    },
+    "owner": "ondrej.michalcik",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6bbb7a4b-68d2-423f-9832-a070ff1fa99e"
+    },
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     }
   }
 }

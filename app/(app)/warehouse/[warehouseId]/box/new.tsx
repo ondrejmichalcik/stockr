@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
 import { createBox } from '@/src/lib/supabase';
-import { printBoxLabel } from '@/src/lib/qrLabel';
+import { printBoxLabel, printBoxLabelViaBrotherSDK } from '@/src/lib/qrLabel';
 import type { Box } from '@/src/types/database';
 import { colors, radius, shadows, spacing, typography } from '@/src/theme';
 import { Icon } from '@/src/components/Icon';
@@ -37,12 +37,9 @@ export default function NewBoxScreen() {
     if (!createdBox) return;
     try {
       setPrinting(true);
-      await printBoxLabel(createdBox);
+      await printBoxLabelViaBrotherSDK(createdBox);
     } catch (e: any) {
-      const msg = e?.message ?? '';
-      if (!msg.toLowerCase().includes('did not complete')) {
-        Alert.alert('Print error', msg || 'Cannot open print dialog.');
-      }
+      Alert.alert('Brother print error', e?.message ?? 'Cannot print via Brother SDK.');
     } finally {
       setPrinting(false);
     }
@@ -133,8 +130,8 @@ export default function NewBoxScreen() {
               <ActivityIndicator color={colors.primary} />
             ) : (
               <>
-                <Icon sf="printer" size={18} color={colors.primary} />
-                <Text style={styles.printBtnText}>Print label</Text>
+                <Icon sf="printer.fill" size={18} color={colors.primary} />
+                <Text style={styles.printBtnText}>Print to Brother</Text>
               </>
             )}
           </Pressable>
