@@ -417,10 +417,17 @@ Druhý, menší kus sprintu: **pack size** na items. Currently lze říct "2 pac
 - ✅ Napojeno v `LabelModalContent` (`box/[boxId].tsx`) + post-create QR preview (`box/new.tsx`) — dva buttony "Print label" (sage primary) + "Save PDF" (subtle share helper)
 - ✅ **In-app QR views používají stejný asset** — `react-native-qrcode-svg` s `logo={require(...)}`, `logoSize={92}`, `logoBorderRadius={12}` matching print proporcemi. Vizuální konzistence mezi screen preview a fyzickým tiskem
 
-**Phase 2 — hardware test** ⏳ (až dorazí tiskárna)
-- ⏳ Spárovat v iOS Settings → Bluetooth → ověřit AirPrint discovery
-- ⏳ Reálný print na 24mm TZe tape + případné ladění CSS/layout podle skutečného výstupu (fontsize tuning, margins, QR scan reliability)
-- ❌ Niimbot BLE protokol — zrušeno, AirPrint cesta je robustnější
+**Phase 2 — hardware test** ✅ (2026-04-15, tiskárna dorazila)
+- ✅ Tiskárna PT-P710BT spárovaná v iOS Settings → Bluetooth (Connected stav)
+- ✅ **Klíčové zjištění: iOS system print dialog Bluetooth-only printery nevidí.** AirPrint scanuje přes Bonjour/WiFi, Bluetooth tiskárny tam nejsou. Brother iPrint&Label ani novější P-touch Design&Print 2 nepřijímají file imports (PDF ani PNG, ani přes share sheet — "Cannot share files"). Ani Photos-based workflow nefunguje, Brother apps jsou template-only.
+- ✅ **Jediná funkční cesta = Brother Mobile Print SDK integrace** (viz Sprint 3F)
+- ❌ Niimbot BLE protokol — zrušeno, Brother SDK má oficiální knihovnu
+- ⏳ Skutečný tiskový test landscape orientation layout — čeká na nový build po rotation fix (Sprint 3F)
+
+### Sprint 3D extras — iterativní ladění label layoutu
+- ✅ **Rotation fix** — Brother SDK treats PDF width jako tape width (ne shorter-dim-auto). Landscape PDF (80×24mm) → 0.3× scale → miniature output. Fix: portrait PDF (24×80mm) + content rotated 90° via CSS transform. `@page size: 68pt 227pt`, `.label` absolute positioned + `translate(-50%, -50%) rotate(90deg)`, zachován horizontální visual design.
+- ✅ **Font sizing iterace**: `computeNameFontSize` heuristika refinovaná — charRatio 0.58 → 0.62 (konzervativnější), floor 3mm → 2mm (delší názvy fit), height cap 13mm bez location / 9mm s location, max 10mm. Plus `text-align: center` na `.text` container pro vizuální vycentrování krátkých názvů mezi QR a pravým okrajem tape.
+- ✅ **Label logo iterace** přes Python PIL pipeline: auto-crop bbox detection (non-white region), Gemini watermark nuke (threshold <150), background clean-up (luminance ≥230 → pure white), 8px rounded rectangle border baked-in (38px radius = 15% = subtle rounding), 7.5mm tile v QR (~42% width). Matching `logoBorderRadius={12}` v in-app `react-native-qrcode-svg` views.
 
 ### Claude Vision pro produkty bez EAN ✅
 **Architektura pivotovala od Supabase Edge Function → direct client call s per-user API klíčem v SecureStore.** Důvody: nulový risk leaku v TestFlight binary, každý user si řídí vlastní útratu, simpler deploy (žádná Deno function). Claude Code subscription nejde použít — je vázaná na OAuth CLI, nemůže sloužit jako token pro mobile app.
@@ -445,6 +452,87 @@ Druhý, menší kus sprintu: **pack size** na items. Currently lze říct "2 pac
 ### Custom products rozšíření
 - ✅ Upsert při přidání draftu se známým EAN — už je
 - ⏳ Settings screen `settings/products.tsx` pro spravování custom DB — odložit do Sprint 4
+
+### Sprint 3E — TestFlight build pipeline ✅ (2026-04-15)
+Posun z Sprint 5 plánu předem, protože Brother PT-P710BT Bluetooth vyžaduje real-device test (simulátor nemá Bluetooth stack). Tím máme zároveň připravenou distribuci pro manželku.
+- ✅ `eas-cli` installed + Expo account + `eas login`
+- ✅ `eas init` — projekt `6bbb7a4b-68d2-423f-9832-a070ff1fa99e` pod ondrej.michalcik ownerem
+- ✅ `eas.json` s `preview` profilem (distribution: store, autoIncrement: true, channel: preview, environment: preview) a `production` profilem jako budoucnostni. `appVersionSource: remote` aby EAS spravoval buildNumber server-side.
+- ✅ `app.json` — `ios.buildNumber: "1"` initial, `ITSAppUsesNonExemptEncryption: false` (obchází export compliance prompt při každém buildu)
+- ✅ EAS env vars — `EXPO_PUBLIC_SUPABASE_URL` + `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` jako plaintext visibility v `preview` environmentu (ne secrets protože jsou EXPO_PUBLIC_* bundled client-side stejně)
+- ✅ **expo-updates** auto-installed během prvního `eas build` — přidal `runtimeVersion.policy: appVersion` + `updates.url` do app.json. OTA JS updates připraveny pro budoucí use (`eas update --channel preview`)
+- ✅ Apple credentials — first build interactive flow: Apple ID + 2FA → EAS auto-vytvořil Distribution Certificate + Provisioning Profile (uloženo na EAS server, reusable pro další buildy)
+- ✅ `eas submit --platform ios --latest` — auto-vytvořil App Store Connect record (Stockr, bundle `com.ondrejmichalcik.stockr`, ASC App ID 6762301537) + auto-vytvořil App Store Connect API Key `[Expo] EAS Submit` uložený na EAS serveru
+- ✅ TestFlight Internal Testing setup — Family group s Enable Automatic Distribution, assignment buildu na group. Apple build processing ~5-10 min → Ready to Test state
+- ✅ iPhone install flow — TestFlight app na iPhonu (auto-loginnutý přes iCloud Apple ID), Stockr naskočí v Apps sekci, install + open. Apple Sign In flow funguje na reálné devicu.
+- ℹ️ **Gotchas** (pro budoucí builds): Apple Developer user status musí být "Active" (ne "Pending") nebo TestFlight internal tester nevidí app. iCloud Apple ID na iPhonu musí match ASC user email. Internal testers nedostávají email invite (na rozdíl od external) — app se prostě objeví v jejich TestFlight app pokud match email.
+
+### Sprint 3F — Brother Mobile Print SDK integrace 🚧 (2026-04-15, čeká na build queue)
+Po zjištění že iOS system print dialog Bluetooth tiskárnu nevidí a Brother consumer apps (iPrint&Label / P-touch Design&Print 2) nepřijímají file imports, jedinou reálnou cestou je direct Brother SDK integrace.
+- ✅ `expo-brother-printer-sdk@0.7.0` (rakeshta) — Expo-compatible wrapper nad Brother Mobile Print SDK (xcframework bundled)
+- ✅ **Patch-package setup** — `patches/expo-brother-printer-sdk+0.7.0.patch` přidává PT series support (knihovna defaultně supports jen QL). Postinstall hook v package.json zajišťuje re-apply při `npm install` v EAS cloud.
+- ✅ Patch obsah: do `SettingsUtils.swift` přidán `_parseSettings_PTSeries` co vytvoří `BRLMPTPrintSettings(defaultPrintSettingsWith: model)` s `labelSize` mapnutým na `BRLMPTPrintSettingsLabelSize` enum (24mm TZe tape = index 5). `_printerModelFromName` rozšířen o PT-P710BT + 16 dalších PT modelů. `settingsFromDictionary` má nový `modelName.hasPrefix("PT")` branch.
+- ✅ **Swift rename gotcha** — `BRLMPrinterModelPT_P715eBT` Swift importuje jako `.pt_P715eBT` (lowercase kvůli lowercase `e` uprostřed ruší acronym heuristiku), ostatní PT modely jsou `.PT_P710BT` etc. První build compile fail, fix na jeden model enum value.
+- ✅ `src/lib/vision.ts` nezměněn; `src/lib/qrLabel.ts` přidána `printBoxLabelViaBrotherSDK(box)` funkce: generuje PDF přes `printToFileAsync` → `BrotherPrinterSDK.searchBluetoothPrinters()` najde paired channely → prefer PT-series match → `BrotherPrinterSDK.printPDF(uri, channel, { labelSize: 5, autoCut: true })` přes Bluetooth
+- ✅ `LabelModalContent` (box/[boxId].tsx) + `box/new.tsx` — **3 print button stack**: **Print to Brother** (primary sage, Brother SDK path), **AirPrint / other** (secondary, iOS system dialog pro budoucí WiFi printery), **Save PDF** (tertiary, share sheet fallback)
+- ⏳ **Waiting on build** — aktuálně v EAS free tier queue (~4h), po built + submit + TestFlight update → reálný print test s rotovaným portrait PDF
+
+**Známé zbytky kterým se může dařit špatně v real-world testu:**
+- Rotation direction — pokud `rotate(90deg)` vyjde tape s QR na špatné straně, swap na `rotate(-90deg)` nebo `270deg`
+- Label size enum — nastaveno na 24mm (index 5); pokud by default PT-P710BT čekal jinou indexaci, fallback na `BRLMPTPrintSettingsLabelSizeWidth24mm` přes pure default settings bez override
+- Channel model name format — Stockr `.startsWith('PT-')` match, pokud Brother SDK vrátí `"Brother PT-P710BT"` místo `"PT-P710BT"`, match selže. Easy fix: loose match.
+- Tape leading/trailing margin — Brother TZe má ~1.5-2mm physical non-print area na každé straně. Pokud content má cutoffy, snížit padding v HTML nebo labelSize settings.
+
+---
+
+## Strategická změna — offline-first + App Store 🧭 (2026-04-15)
+
+**Insight od uživatele**: Stockr je **prepper emergency tool**. Musí fungovat i když internet není dostupný. TestFlight je inherentně nekompatibilní:
+- TestFlight builds **expirují po 90 dnech**, pak user bez connection k Apple serverům nemůže app otevřít
+- Brother tiskárna je offline-only workflow, datový layer (Supabase) aktuálně ne
+- Hardware upgrade nebo re-install bez internetu = stuck
+
+**Důsledek pro roadmap**: TestFlight je vhodný pro DEVELOPMENT testing (jsme teď), ale **finální distribuce musí jít přes App Store** (unlimited app lifetime, žádný Apple serverový check-in pro běh).
+
+**A datový layer musí být offline-first** — aktuálně každé operace jde do Supabase přes síť. Bez internetu appka nefunguje. Musíme přejít na **local-first architecture** kde:
+- Primary data source = local SQLite / reactive DB na zařízení
+- Cloud Supabase = sync backup a sdílení mezi zařízeními
+- Pracovní mode při offline: appka funguje 100% lokálně, změny se frontují do sync queue
+- Při reconnection: sync engine vyřeší conflicts (last-write-wins pro 2-user family use)
+
+**Přepriorizace budoucích sprintů**:
+1. **Sprint 3F Brother print** — dokončit (waiting on build)
+2. **Sprint 4' — Offline-first data layer** (nový, vysoká priorita) — viz níže
+3. **Sprint 4 — Push notifikace** — lze kombinovat s offline (local notifications pro expiraci, nepotřebují server)
+4. **Sprint 5 — App Store release** — poslední, až offline je stabilní
+
+---
+
+## Sprint 4' – Offline-first data layer 🆕 ⏳
+
+**Cíl**: Udělat Stockr fully offline-capable. Appka musí fungovat bez připojení na síť (reads + writes + QR scan + print) a sync s Supabase probíhá automaticky když je síť dostupná.
+
+**Architecturní volby k rozhodnutí** (before implementation):
+- **WatermelonDB + Supabase sync adapter** — Supabase má [oficiální guide](https://supabase.com/docs/guides/database/watermelondb), RN-native reactive ORM. Proven, widely used.
+- **PowerSync for Supabase** — commercial SaaS offline-first sync, free tier do 10 users, Supabase Postgres replication do local SQLite. Nejvíc polished ale external dependency.
+- **Legend-State + Supabase plugin** — novější reactive state library s built-in persistence a Supabase sync plugin. Méně battle-tested.
+- **Custom SQLite + vlastní sync** — `expo-sqlite` + manual migration scripts + queue-based sync. Maximum kontrola, nejvíc práce, ale žádné external dependencies.
+
+**Rough scope** (ne detailní, fáze se ujasní po výběru cesty):
+- ⏳ Local DB schema mirror Supabase tabulek — warehouses, warehouse_members, boxes, items, invitations, custom_products
+- ⏳ Initial sync — při prvním loginu stáhnout vše co user je member
+- ⏳ Write path — všechny mutace (createBox, addItem, updateItem, deleteBox, openOneItem) jdou do local DB first, pak async flush do Supabase
+- ⏳ Read path — `useLiveQuery` nebo ekvivalent, komponenty reaguji na local DB changes bez touch síti
+- ⏳ Sync engine — background task, při app foreground + periodic. Conflict resolution: last-write-wins pro basic ops, custom logic pro delete vs update
+- ⏳ Offline indicator v UI — subtle banner nebo status dot když není sync možný
+- ⏳ Session token persistence — Apple Sign In první login potřebuje internet, po něm cached token musí fungovat indefinitely (nastavit Supabase auth na non-expiring session nebo grace period management)
+- ⏳ Image cache to device filesystem — aktuálně `item.image_url` je public URL na Supabase Storage, offline se obrázky nezobrazí. Download na `FileSystem.documentDirectory/images/{hash}.jpg` při upload, use local path když existuje, fallback na URL
+- ⏳ Conflict resolution pro opened row (open_one_item RPC) — RPC je atomic na serveru, offline ekvivalent bude local transaction s deferred sync
+
+**Key risks**:
+- Realtime subscriptions (aktuálně `subscribeBoxes`, `subscribeItems`, `subscribeMyWarehouses`) budou refactor nebo emulace — local DB events místo Supabase postgres_changes
+- RLS semantika se musí replikovat v client kódu (aktuálně DB vynucuje, offline client musí sám držet invarianty jako "jen owner může smazat warehouse")
+- `open_one_item` RPC a `create_warehouse_for_me` RPC jsou atomic DB operace — offline ekvivalent potřebuje local transaction emulaci
 
 ---
 
@@ -663,22 +751,28 @@ eas submit --platform ios
 
 Po otevření nové session a prozkoumání stavu:
 
-1. **Zkontroluj, že Metro bundler naběhne a appka se spustí** — `npx expo start --dev-client` a v simulátoru reload
-2. **Potvrď, že DB migrace ze Sprintu 3A běží** — `storage.objects` má 4 policies pro `product-images` bucket (select/insert/update/delete), předchozí Sprint 2.7 RPCs + triggery nezměněny
-3. **Rozhodni, co dál**:
-   - **Brother PT-P710BT tisk** — tiskárna objednaná 2026-04-14, až dorazí: `qrLabel.ts` HTML template + `expo-print` AirPrint test. Prototyp HTML se dá připravit i bez hardware.
-   - **Sprint 4 (sdílení + notifikace)** — pozvánky už jsou z 2.7 hotové, zbývá push notifikace přes `expo-notifications` + Supabase Edge Function cron pro daily-expiry-check
-   - **TestFlight distribuce (Sprint 5)** — EAS build pipeline, real-device test s druhým Apple ID
-   - **Storage orphan cleanup** — nízká priorita, pokud začne být prostor problém
+1. **Zkontroluj EAS build status** — [expo.dev dashboard](https://expo.dev/accounts/ondrej.michalcik/projects/stockr) — Sprint 3F build by měl být hotový z přes noc. Pokud success → `eas submit --platform ios --latest` → TestFlight processing → iPhone update.
+2. **Reálný Brother print test** — otevři Stockr na iPhonu (po TestFlight update), najdi bednu, **Print to Brother** button, podívej se na fyzický výstup:
+   - Rotace správná? (QR + název horizontálně podél tape)
+   - Velikost čitelná? (font ~10mm pro krátké, ~5mm pro střední)
+   - QR scan funguje s logem uprostřed?
+   - Margins OK? (žádný content cutoff)
+3. **Commit Sprint 3F** — až je funkční, git commit všech změn s message typu `sprint 3F — Brother SDK direct print`
+4. **Rozhodni co dál**:
+   - **Sprint 4' (offline-first)** — vysoká priorita kvůli prepper use case. Research fáze: WatermelonDB vs PowerSync vs Legend-State vs custom SQLite. Pak architectural plan + implementace.
+   - **Sprint 4 (push notifikace)** — lze kombinovat s offline pokud local scheduling (žádný server cron potřeba pro basic expiry reminders)
+   - **Sprint 5 (App Store release)** — až offline je stabilní. Screenshots, privacy policy, App Privacy disclosures, Apple review submit.
 
-### Session 2026-04-15 — Sprint 3A/B/C/D UZAVŘEN ✅
+### Session 2026-04-15 — Sprint 3A/B/C/D/E UZAVŘENO + 3F 🚧
 
-Image upload pipeline + Claude Vision identifikace + Brother print prototype (hardware-independent Phase 1). Sprint 3 zbývá jen reálný print test s hardwarem (Phase 2 — až dorazí tiskárna).
+Dlouhý den. Image upload pipeline + Claude Vision + Brother print prototype + TestFlight build pipeline + Brother SDK integrace. **Sprint 3F čeká na EAS cloud build** (free tier queue ~4h, buildne zítra ráno).
 
 - **Sprint 3A — Image upload do Storage**: `expo-image-picker` + `expo-image-manipulator` + `expo-file-system` installed. `src/lib/storage.ts` s upload pipeline používající **new File API** místo broken `fetch+blob` (classic RN gotcha — `fetch(uri).blob()` produkoval prázdný/bílý soubor). Resize 800px width + 70% JPEG = ~80–150 KB per image. Storage RLS policies na `storage.objects` (public select, authenticated writes). `ItemEditSheet` má thumbnail tile nahoře s `ActionSheetIOS` picker. `deleteProductImage` helper s safe no-op pro external (OFF) URLs.
 - **Sprint 3B — Picker v add-items.tsx**: stejný pattern jako ItemEditSheet, ale wrapuje existující image/placeholder v Pressable. Empty state má "Tap to add photo" hint + category ikonu. `handleAddToQueue` blokuje Save během uploadu.
 - **Sprint 3C — Claude Vision**: kompletní architektural pivot od původního plánu (Supabase Edge Function → direct client call s per-user key). Důvody a implementace viz Sprint 3 plan section výše. Path A (auto na OFF 404) + Path B (manual "✨ Identify with AI" button) + shelf life hint (ne prefill) + custom_products caching.
 - **Sprint 3D — Brother print prototype**: hardware-independent Phase 1. `qrLabel.ts` generuje 80×24mm PDF přes `printToFileAsync` → `printAsync(uri)` two-step (direct HTML path iOS ignoroval a defaultil na A4). Dynamic font sizing podle `computeNameFontSize` heuristiky (54mm / chars × 0.62 char-ratio, floor 2mm, max 10mm) s center align. QR obsahuje zaoblené logo bedny v 7.5mm tile — asset `label-logo.png` (nano banana 3D crate) prošel Python PIL pipeline (auto-crop bbox detection, Gemini watermark removal z bottom-right, background clean-up threshold ≥230 → pure white, 8px rounded rect border 38px radius baked-in). Error correction H pro scanner reliability. `printBoxLabel` + `shareBoxLabelPdf` helpery napojené v `LabelModalContent` + post-create QR preview. In-app QR views (`react-native-qrcode-svg`) používají stejný asset pro visual consistency.
+- **Sprint 3E — TestFlight build pipeline**: `eas-cli` + Expo account + `eas.json` s preview profilem (distribution: store, autoIncrement buildNumber, channel preview, env preview) + `appVersionSource: remote` pro EAS-managed versioning. `app.json` `ios.buildNumber: "1"` + `ITSAppUsesNonExemptEncryption: false`. EAS env vars (Supabase URL + publishable key jako plaintext v preview env — jsou stejně EXPO_PUBLIC_* bundled). First build interactive credentials setup (Apple ID + 2FA → EAS auto-generated Distribution Cert + Provisioning Profile uloženo na EAS server). `eas submit` auto-vytvořil App Store Connect record (ASC App ID 6762301537) + App Store Connect API Key. TestFlight Internal Testing group Family s auto-distribution, build naskočil v TestFlight app na iPhonu bez email invite (internal testers přímo vidí app). Apple Sign In funguje na real device.
+- **Sprint 3F — Brother SDK integrace** (IN PROGRESS, čeká na build): iOS system print dialog Bluetooth tiskárny nevidí (scanuje AirPrint přes Bonjour/WiFi). Brother iPrint&Label + P-touch Design&Print 2 apps nepřijímají žádné file imports (PDF ani PNG přes share sheet hází "Cannot share files"). Jediná funkční cesta = direct Brother Mobile Print SDK integrace. Zjištěno že existuje `expo-brother-printer-sdk@0.7.0` (rakeshta), Expo-compatible wrapper nad Brother xcframework — ale defaultně supports jen QL series. Solution: **patch-package workflow**. Patch `SettingsUtils.swift` přidává PT series support s novým `_parseSettings_PTSeries` co vytvoří `BRLMPTPrintSettings(defaultPrintSettingsWith: model)` (24mm TZe = labelSize index 5) + `_printerModelFromName` rozšířen o PT-P710BT + 16 dalších PT modelů. `postinstall: patch-package` v package.json zajišťuje že EAS cloud build re-aplikuje patch při `npm install`. `printBoxLabelViaBrotherSDK` flow v qrLabel.ts: generate PDF → `searchBluetoothPrinters()` → prefer PT-series channel → `printPDF(uri, channel, settings)`. 3 print buttony v LabelModalContent (Print to Brother primary / AirPrint / other secondary / Save PDF tertiary). **Rotation gotcha**: Brother SDK treats PDF width jako tape width, landscape PDF → 0.3× scale → miniature print. Fix: portrait PDF (24×80mm) + content rotated 90° via `transform: translate(-50%, -50%) rotate(90deg)` na `.label`. Waiting on EAS build queue.
 
 **Klíčová rozhodnutí této session**:
 - **Per-device API klíč v SecureStore** je bezpečnější než shared Edge Function secret (nulový leak risk v TestFlight binary) a každý user platí svoje volání. Claude Code / Claude Pro subscription NELZE použít pro mobile API calls — je vázaná na OAuth CLI session.
@@ -690,11 +784,17 @@ Image upload pipeline + Claude Vision identifikace + Brother print prototype (ha
 - **`expo-print` na iOS ignoruje `@page` CSS při přímém HTML input** — always defaultí na A4/Letter. Fix: two-step `printToFileAsync({ html, width, height })` → `printAsync({ uri })`. PDF má exact embedded page size v metadata a print dialog to respektuje. Zaznamenávám pro budoucí print work.
 - **QR logo overlay na ECC-H**: 30% area damage tolerance v teorii, ale praktická safe zone pro center overlay je ~25% area = ~50% width. Aktuálně 7.5mm/18mm ≈ 42% width = 17% area → komfortní margin.
 - **Python PIL pipeline pro asset preprocessing** — auto-crop bbox, watermark removal, background clean-up, baked-in borders. Lepší než runtime manipulation pro static assety. Zachováno jako jednorázový script (není v repo, dá se rekonstruovat z commit history pokud by bylo potřeba).
+- **TestFlight internal testers dostávají mail jen někdy** — pro internal je výchozí behavior že app naskočí přímo v TestFlight appce na iPhonu s matching iCloud Apple ID. Pozvánkový email je optional flow pro external testers. V našem případě iCloud Apple ID na iPhonu musí být registrovaný jako ASC user v Active state (Pending=neviditelné).
+- **Brother PT-P710BT ecosystem je dysfunkční pro developer integrace** — iOS system print dialog Bluetooth tiskárny nevidí, Brother consumer apps (iPrint&Label, Design&Print 2) nepřijímají žádné file imports, share sheet hází "Cannot share files" ani pro PNG/JPEG. Jediná cesta = direct SDK integration. Pro vendor lock-in z pohledu devs nepříjemné, ale jakmile to funguje, UX je one-tap print z aplikace.
+- **patch-package pattern pro node_modules modifikace** — dobrá volba když máme funkční upstream knihovnu ale chybí jedno konkrétní supported scenario. `postinstall` hook garantuje auto-apply při `npm install`, takže funguje i v EAS cloud builds. Patch souborové je v git repu (`patches/expo-brother-printer-sdk+0.7.0.patch`), survives updaty, dá se kdykoli regenerovat `npx patch-package <name>`.
+- **Swift Obj-C enum renames jsou nepredictable** — `BRLMPrinterModelPT_P715eBT` Swift import jako `.pt_P715eBT` (lowercase) kvůli lowercase `e` uprostřed ruší acronym heuristiku. Ostatní `BRLMPrinterModelPT_XXXBT` zůstávají `.PT_XXXBT`. Build fail je single line fix ale debug z první je nepříjemný.
+- **STRATEGICKÁ ZMĚNA — TestFlight → App Store cesta + offline-first priorita**: TestFlight expiruje buildy po 90 dnech což je inkompatibilní s prepper emergency use case (appka musí fungovat i bez internetu navždy). App Store publikace je long-term target. Parallelně datový layer přejde na **local-first** (local SQLite + Supabase sync) — podrobný návrh v Sprintu 4' sekci výše. Tohle je velká architectural change co postpones pushnotify sprint (4) za offline-first sprint (4').
 
 **Otevřené drobnosti** (non-blocking):
 - Orphan cleanup v storage (cancelled drafts s uploadedem foto). Defer.
 - `visionEnabled` se čte jen na mount v add-items — pokud user nastaví klíč mid-session na Profile a hned skočí scan, refresh neproběhne (screen je v různé stack entry). Acceptable; fix přidat `useFocusEffect`.
-- Brother tisk Phase 2 — až dorazí hardware, reálný print test + ladění CSS/layout podle skutečného výstupu.
+- Brother print Phase 2 rotation verification — waiting na zitřejší build.
+- Commit Sprint 3F jako samostatný commit až build projde a výstup je verified (patch + qrLabel rotation + 3 print buttons + expo-brother-printer-sdk deps).
 
 ### Session 2026-04-14 — Sprint 2.7 UZAVŘEN ✅
 
