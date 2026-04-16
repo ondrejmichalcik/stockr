@@ -12,8 +12,10 @@ import {
   Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,8 +23,9 @@ import { useFocusEffect, useGlobalSearchParams, useRouter } from 'expo-router';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { listAllItemsInWarehouse, openOneItem } from '@/src/lib/supabase';
-import type { ItemWithBox } from '@/src/types/database';
+import type { Category, ExpiryStatus, ItemWithBox } from '@/src/types/database';
 import {
+  CATEGORIES,
   EXPIRY_COLORS,
   compareItemsByPriority,
   formatExpiry,
@@ -49,6 +52,14 @@ export default function ItemsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<ItemWithBox | null>(null);
   const openSwipeableRef = useRef<Swipeable | null>(null);
+
+  // Search + Filter
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<ExpiryStatus | 'all'>('all');
+  const [openedFilter, setOpenedFilter] = useState<'all' | 'opened' | 'sealed'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<Category | 'all'>('all');
+  const searchRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
     if (!warehouseId) return;
@@ -88,6 +99,48 @@ export default function ItemsScreen() {
   // Opened items bubble to the top of their expiry group so the user sees
   // "finish what you already started first" at a glance.
   const sortedItems = useMemo(() => [...items].sort(compareItemsByPriority), [items]);
+
+  const filteredItems = useMemo(() => {
+    let result = sortedItems;
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (i) =>
+          i.name.toLowerCase().includes(q) ||
+          i.box_name.toLowerCase().includes(q),
+      );
+    }
+    if (statusFilter !== 'all') {
+      result = result.filter((i) => getExpiryStatus(i.expiry_date) === statusFilter);
+    }
+    if (openedFilter === 'opened') {
+      result = result.filter((i) => i.opened);
+    } else if (openedFilter === 'sealed') {
+      result = result.filter((i) => !i.opened);
+    }
+    if (categoryFilter !== 'all') {
+      result = result.filter((i) => i.category === categoryFilter);
+    }
+    return result;
+  }, [sortedItems, searchQuery, statusFilter, openedFilter, categoryFilter]);
+
+  const hasActiveFilters =
+    searchQuery.trim().length > 0 ||
+    statusFilter !== 'all' ||
+    openedFilter !== 'all' ||
+    categoryFilter !== 'all';
+
+  const toggleSearch = () => {
+    if (searchVisible) {
+      setSearchQuery('');
+      setSearchVisible(false);
+    } else {
+      setSearchVisible(true);
+      setTimeout(() => searchRef.current?.focus(), 100);
+    }
+  };
+
+  const showFilters = searchVisible || hasActiveFilters;
 
   const confirmOpen = (item: ItemWithBox, close: () => void) => {
     Alert.alert(
@@ -141,7 +194,7 @@ export default function ItemsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <ListHeader
         title="Items"
-        subtitle="Sorted by nearest expiry"
+        subtitle={hasActiveFilters ? `${filteredItems.length} of ${items.length}` : 'Sorted by nearest expiry'}
         leading={
           <Pressable
             hitSlop={12}
@@ -153,13 +206,104 @@ export default function ItemsScreen() {
           </Pressable>
         }
         actions={[
-          { sfIcon: 'magnifyingglass', onPress: () => {}, label: 'Search' },
-          { sfIcon: 'line.3.horizontal.decrease', onPress: () => {}, label: 'Filter' },
+          {
+            sfIcon: searchVisible ? 'xmark' : 'magnifyingglass',
+            onPress: toggleSearch,
+            label: searchVisible ? 'Close search' : 'Search',
+          },
+          {
+            sfIcon: 'line.3.horizontal.decrease',
+            onPress: () => {
+              // Toggle filter visibility: show filter chips when tapped
+              if (showFilters && !hasActiveFilters) {
+                setSearchVisible(false);
+              } else {
+                setSearchVisible(true);
+              }
+            },
+            label: 'Filter',
+          },
         ]}
       />
 
+      {/* Search bar */}
+      {searchVisible && (
+        <View style={styles.searchBar}>
+          <Icon sf="magnifyingglass" size={16} color={colors.textMuted} />
+          <TextInput
+            ref={searchRef}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search by name or box..."
+            placeholderTextColor={colors.textSubtle}
+            style={styles.searchInput}
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <Pressable hitSlop={8} onPress={() => setSearchQuery('')}>
+              <Icon sf="xmark.circle.fill" size={18} color={colors.textMuted} />
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      {/* Filter chips */}
+      {showFilters && (
+        <View style={styles.filterSection}>
+          {/* Expiry status */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {(['all', 'expired', 'critical', 'soon', 'ok', 'none'] as const).map((s) => (
+              <Pressable
+                key={s}
+                onPress={() => setStatusFilter((p) => (p === s ? 'all' : s))}
+                style={[styles.filterChip, statusFilter === s && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, statusFilter === s && styles.filterChipTextActive]}>
+                  {s === 'all' ? 'All status' : s.charAt(0).toUpperCase() + s.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          {/* Opened / Sealed */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {(['all', 'opened', 'sealed'] as const).map((s) => (
+              <Pressable
+                key={s}
+                onPress={() => setOpenedFilter((p) => (p === s ? 'all' : s))}
+                style={[styles.filterChip, openedFilter === s && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, openedFilter === s && styles.filterChipTextActive]}>
+                  {s === 'all' ? 'All packs' : s.charAt(0).toUpperCase() + s.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          {/* Category */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            <Pressable
+              onPress={() => setCategoryFilter('all')}
+              style={[styles.filterChip, categoryFilter === 'all' && styles.filterChipActive]}
+            >
+              <Text style={[styles.filterChipText, categoryFilter === 'all' && styles.filterChipTextActive]}>All categories</Text>
+            </Pressable>
+            {CATEGORIES.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setCategoryFilter((p) => (p === c ? 'all' : c))}
+                style={[styles.filterChip, categoryFilter === c && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, categoryFilter === c && styles.filterChipTextActive]}>
+                  {c.charAt(0).toUpperCase() + c.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       <FlatList
-        data={sortedItems}
+        data={filteredItems}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         refreshControl={
@@ -172,9 +316,13 @@ export default function ItemsScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Icon brand="inbox" size={120} style={styles.emptyIcon} />
-            <Text style={styles.emptyTitle}>No items yet</Text>
+            <Text style={styles.emptyTitle}>
+              {hasActiveFilters ? 'No matches' : 'No items yet'}
+            </Text>
             <Text style={styles.emptyText}>
-              Open a box and add your first items.
+              {hasActiveFilters
+                ? 'Try a different search or filter.'
+                : 'Open a box and add your first items.'}
             </Text>
           </View>
         }
@@ -216,6 +364,10 @@ export default function ItemsScreen() {
             }}
             onOpened={() => {
               // No realtime sub on items in this tab — refetch cross-box list.
+              setEditingItem(null);
+              load().catch(() => {});
+            }}
+            onMoved={() => {
               setEditingItem(null);
               load().catch(() => {});
             }}
@@ -320,6 +472,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 20,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    ...typography.body,
+    flex: 1,
+    color: colors.text,
+    paddingVertical: 0,
+  },
+  filterSection: {
+    gap: spacing.xs + 2,
+    marginBottom: spacing.sm,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs + 2,
+    paddingHorizontal: spacing.lg,
+  },
+  filterChip: {
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: colors.textOnPrimary,
   },
   center: {
     flex: 1,

@@ -16,6 +16,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,20 +37,25 @@ import {
   deleteItem,
   getBoxById,
   listItems,
+  moveItemQuantity,
   openOneItem,
+  supabase,
   subscribeItems,
+  verifyItems,
 } from '@/src/lib/supabase';
 import {
   printBoxLabel,
   printBoxLabelViaBrotherSDK,
   shareBoxLabelPdf,
 } from '@/src/lib/qrLabel';
+import { BoxPicker } from '@/src/components/BoxPicker';
 import type { Box, Item, Category } from '@/src/types/database';
 import {
   EXPIRY_COLORS,
   compareItemsByPriority,
   formatExpiry,
   formatItemQuantity,
+  formatVerified,
   getExpiryStatus,
 } from '@/src/types/database';
 import { colors, radius, shadows, spacing, typography } from '@/src/theme';
@@ -83,6 +89,17 @@ export default function BoxDetailScreen() {
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [error, setError] = useState<string | null>(null);
+
+  // Multi-select mode for batch move
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showMovePicker, setShowMovePicker] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<Box | null>(null);
+  const [moveQuantities, setMoveQuantities] = useState<Record<string, number>>({});
+
+  // Inventory mode
+  const [inventoryMode, setInventoryMode] = useState(false);
+  const [verifiedIds, setVerifiedIds] = useState<Set<string>>(new Set());
 
   // Load persisted view mode preference (global across all boxes).
   useEffect(() => {
@@ -179,18 +196,44 @@ export default function BoxDetailScreen() {
   };
 
   const showBoxActionSheet = () => {
-    const options = ['Show QR label', 'Edit box', 'Delete box', 'Cancel'];
+    const options = [
+      'Show QR label',
+      'Edit box',
+      'Select & move items',
+      'Inventory check',
+      'Inventory history',
+      'Delete box',
+      'Cancel',
+    ];
     ActionSheetIOS.showActionSheetWithOptions(
       {
         options,
-        destructiveButtonIndex: 2,
-        cancelButtonIndex: 3,
+        destructiveButtonIndex: 5,
+        cancelButtonIndex: 6,
         title: box?.name ?? undefined,
       },
       (idx) => {
         if (idx === 0) setShowLabel(true);
         else if (idx === 1) setShowEdit(true);
-        else if (idx === 2) handleDeleteBox();
+        else if (idx === 2) {
+          setSelectMode(true);
+          setSelectedIds(new Set());
+        }
+        else if (idx === 3) {
+          if (box) {
+            router.push(
+              `/warehouse/${warehouseId}/box/${box.id}/inventory` as any,
+            );
+          }
+        }
+        else if (idx === 4) {
+          if (box) {
+            router.push(
+              `/warehouse/${warehouseId}/box/${box.id}/inventories` as any,
+            );
+          }
+        }
+        else if (idx === 5) handleDeleteBox();
       },
     );
   };
@@ -241,6 +284,105 @@ export default function BoxDetailScreen() {
         },
       ],
     );
+  };
+
+  // ---- Inventory mode handlers ----
+
+  const toggleVerifyItem = (id: string) => {
+    setVerifiedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const verifyAll = () => {
+    setVerifiedIds(new Set(items.map((i) => i.id)));
+  };
+
+  const completeInventory = async () => {
+    if (verifiedIds.size === 0) {
+      Alert.alert('Nothing verified', 'Tap items you physically see in the box.');
+      return;
+    }
+    try {
+      await verifyItems([...verifiedIds]);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      const notFound = items.length - verifiedIds.size;
+      Alert.alert(
+        'Inventory complete',
+        `${verifiedIds.size} verified${notFound > 0 ? `, ${notFound} not found` : ''}`,
+      );
+      setInventoryMode(false);
+      setVerifiedIds(new Set());
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Cannot save inventory.');
+    }
+  };
+
+  const exitInventory = () => {
+    setInventoryMode(false);
+    setVerifiedIds(new Set());
+  };
+
+  // ---- Multi-select handlers ----
+
+  const toggleSelectItem = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  // Step 1: BoxPicker selects target → initialize per-item quantities
+  const handleBatchMovePickTarget = (targetBox: Box) => {
+    setShowMovePicker(false);
+    const qtys: Record<string, number> = {};
+    for (const id of selectedIds) {
+      const item = items.find((i) => i.id === id);
+      if (item) qtys[id] = item.quantity;
+    }
+    setMoveQuantities(qtys);
+    setMoveTarget(targetBox);
+  };
+
+  // Step 2: User confirms quantities → execute moves
+  const executeBatchMove = async () => {
+    if (!moveTarget) return;
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const userId = sess.session?.user.id ?? '';
+
+      for (const id of selectedIds) {
+        const item = items.find((i) => i.id === id);
+        if (!item) continue;
+        const qty = moveQuantities[id] ?? item.quantity;
+        if (qty <= 0) continue;
+
+        await moveItemQuantity(
+          id,
+          qty >= item.quantity ? 'all' : qty,
+          moveTarget.id,
+          userId,
+        );
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setMoveTarget(null);
+      exitSelectMode();
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Cannot move items.');
+    }
   };
 
   const sortedItems = useMemo(() => [...items].sort(compareItemsByPriority), [items]);
@@ -396,7 +538,54 @@ export default function BoxDetailScreen() {
           </View>
         }
         renderItem={({ item }) =>
-          viewMode === 'list' ? (
+          inventoryMode ? (
+            <Pressable
+              onPress={() => toggleVerifyItem(item.id)}
+              style={({ pressed }) => [
+                styles.selectRow,
+                verifiedIds.has(item.id) && styles.inventoryVerified,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Icon
+                sf={verifiedIds.has(item.id) ? 'checkmark.circle.fill' : 'circle'}
+                size={24}
+                color={verifiedIds.has(item.id) ? colors.success : colors.textMuted}
+              />
+              <View style={styles.selectRowBody}>
+                <Text style={styles.selectRowName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.selectRowQty} numberOfLines={1}>
+                  {formatItemQuantity(item)}
+                </Text>
+              </View>
+              {item.opened && (
+                <View style={styles.openedBadge}>
+                  <Text style={styles.openedBadgeText}>OPENED</Text>
+                </View>
+              )}
+            </Pressable>
+          ) : selectMode ? (
+            <Pressable
+              onPress={() => toggleSelectItem(item.id)}
+              style={({ pressed }) => [styles.selectRow, pressed && { opacity: 0.7 }]}
+            >
+              <Icon
+                sf={selectedIds.has(item.id) ? 'checkmark.circle.fill' : 'circle'}
+                size={24}
+                color={selectedIds.has(item.id) ? colors.primary : colors.textMuted}
+              />
+              <View style={styles.selectRowBody}>
+                <Text style={styles.selectRowName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text style={styles.selectRowQty} numberOfLines={1}>
+                  {formatItemQuantity(item)}
+                </Text>
+              </View>
+            </Pressable>
+          ) : viewMode === 'list' ? (
             <SwipeableRow
               item={item}
               onPress={() => setEditingItem(item)}
@@ -415,14 +604,171 @@ export default function BoxDetailScreen() {
         }
       />
 
-      <FAB
-        label="Add items"
-        sfIcon="plus"
-        bottom={24}
-        onPress={() =>
-          router.push(`/warehouse/${warehouseId}/box/${box.id}/add-items` as any)
-        }
-      />
+      {/* Multi-select bottom action bar */}
+      {selectMode && (
+        <View style={styles.selectBar}>
+          <Pressable onPress={exitSelectMode} style={styles.selectBarCancel}>
+            <Text style={styles.selectBarCancelText}>Cancel</Text>
+          </Pressable>
+          <Text style={styles.selectBarCount}>
+            {selectedIds.size} selected
+          </Text>
+          <Pressable
+            onPress={() => {
+              if (selectedIds.size === 0) {
+                Alert.alert('No items selected', 'Tap items to select them first.');
+                return;
+              }
+              setShowMovePicker(true);
+            }}
+            style={[styles.selectBarMove, selectedIds.size === 0 && { opacity: 0.4 }]}
+          >
+            <Icon sf="arrow.right.arrow.left" size={16} color={colors.textOnPrimary} />
+            <Text style={styles.selectBarMoveText}>Move</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Inventory bottom bar */}
+      {inventoryMode && (
+        <View style={styles.selectBar}>
+          <Pressable onPress={exitInventory} style={styles.selectBarCancel}>
+            <Text style={styles.selectBarCancelText}>Cancel</Text>
+          </Pressable>
+          <Pressable onPress={verifyAll} style={styles.selectBarCancel}>
+            <Text style={[styles.selectBarCancelText, { color: colors.primary }]}>All</Text>
+          </Pressable>
+          <Text style={styles.selectBarCount}>
+            {verifiedIds.size} / {items.length} verified
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.inventoryCompleteBtn, pressed && { opacity: 0.8 }]}
+            onPress={completeInventory}
+          >
+            <Icon sf="checkmark.shield.fill" size={16} color={colors.textOnPrimary} />
+            <Text style={styles.selectBarMoveText}>Done</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {!selectMode && !inventoryMode && (
+        <FAB
+          label="Add items"
+          sfIcon="plus"
+          bottom={24}
+          onPress={() =>
+            router.push(`/warehouse/${warehouseId}/box/${box.id}/add-items` as any)
+          }
+        />
+      )}
+
+      {/* Box picker for batch move */}
+      <Modal
+        visible={showMovePicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowMovePicker(false)}
+      >
+        {showMovePicker && warehouseId && box && (
+          <BoxPicker
+            warehouseId={warehouseId}
+            excludeBoxId={box.id}
+            onSelect={handleBatchMovePickTarget}
+            onClose={() => setShowMovePicker(false)}
+          />
+        )}
+      </Modal>
+
+      {/* Move quantity confirmation */}
+      <Modal
+        visible={!!moveTarget}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setMoveTarget(null)}
+      >
+        {moveTarget && (
+          <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+            <View style={styles.moveConfirmHeader}>
+              <Text style={styles.moveConfirmTitle}>
+                Move to {moveTarget.name}
+              </Text>
+              <Pressable hitSlop={12} onPress={() => setMoveTarget(null)}>
+                <Text style={styles.moveConfirmClose}>Cancel</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.moveConfirmHint}>
+              Adjust quantities for each item. Set 0 to skip.
+            </Text>
+            <FlatList
+              data={items.filter((i) => selectedIds.has(i.id))}
+              keyExtractor={(i) => i.id}
+              contentContainerStyle={styles.moveConfirmList}
+              renderItem={({ item: it }) => (
+                <View style={styles.moveConfirmRow}>
+                  <View style={styles.moveConfirmRowBody}>
+                    <Text style={styles.moveConfirmRowName} numberOfLines={1}>
+                      {it.name}
+                    </Text>
+                    <Text style={styles.moveConfirmRowInfo}>
+                      {it.quantity} {it.unit} available
+                    </Text>
+                  </View>
+                  <View style={styles.moveConfirmQtyWrap}>
+                    <Pressable
+                      onPress={() =>
+                        setMoveQuantities((p) => ({
+                          ...p,
+                          [it.id]: Math.max(0, (p[it.id] ?? it.quantity) - 1),
+                        }))
+                      }
+                      style={styles.moveConfirmQtyBtn}
+                    >
+                      <Icon sf="minus" size={14} color={colors.text} />
+                    </Pressable>
+                    <TextInput
+                      value={String(moveQuantities[it.id] ?? it.quantity)}
+                      onChangeText={(v: string) => {
+                        const n = parseInt(v, 10);
+                        setMoveQuantities((p) => ({
+                          ...p,
+                          [it.id]: Number.isFinite(n)
+                            ? Math.min(Math.max(0, n), it.quantity)
+                            : 0,
+                        }));
+                      }}
+                      keyboardType="number-pad"
+                      style={styles.moveConfirmQtyInput}
+                      selectTextOnFocus
+                    />
+                    <Pressable
+                      onPress={() =>
+                        setMoveQuantities((p) => ({
+                          ...p,
+                          [it.id]: Math.min(it.quantity, (p[it.id] ?? it.quantity) + 1),
+                        }))
+                      }
+                      style={styles.moveConfirmQtyBtn}
+                    >
+                      <Icon sf="plus" size={14} color={colors.text} />
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+            />
+            <View style={styles.moveConfirmFooter}>
+              <Pressable
+                style={({ pressed }) => [styles.moveConfirmBtn, pressed && { opacity: 0.8 }]}
+                onPress={executeBatchMove}
+              >
+                <Icon sf="arrow.right.arrow.left" size={18} color={colors.textOnPrimary} />
+                <Text style={styles.moveConfirmBtnText}>
+                  Move {Object.values(moveQuantities).filter((q) => q > 0).length} items
+                </Text>
+              </Pressable>
+            </View>
+          </SafeAreaView>
+        )}
+      </Modal>
 
       {/* QR label modal */}
       <Modal
@@ -474,6 +820,13 @@ export default function BoxDetailScreen() {
             onOpened={() => {
               // Realtime sub on items reloads the list — just close the sheet.
               setEditingItem(null);
+            }}
+            onMoved={() => {
+              // Realtime sub won't fire for items LEAVING this box (filter
+              // matches NEW row values, moved item has target box_id now).
+              // Force reload to reflect the removal.
+              setEditingItem(null);
+              load().catch(() => {});
             }}
           />
         )}
@@ -723,6 +1076,7 @@ function SwipeableRow({
             </View>
             <Text style={styles.rowQty} numberOfLines={1}>
               {formatItemQuantity(item)}
+              {item.last_verified ? ` · ${formatVerified(item.last_verified)}` : ''}
             </Text>
           </View>
           {item.expiry_date ? (
@@ -1082,6 +1436,182 @@ const styles = StyleSheet.create({
   gridBadgeText: {
     fontSize: 10,
     fontWeight: '700',
+  },
+
+  // Multi-select mode
+  selectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md + 2,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  selectRowBody: {
+    flex: 1,
+    gap: 2,
+  },
+  selectRowName: {
+    ...typography.headline,
+    color: colors.text,
+  },
+  selectRowQty: {
+    ...typography.footnote,
+    color: colors.textMuted,
+  },
+  inventoryVerified: {
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBgStrong,
+  },
+  inventoryCompleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+    backgroundColor: colors.success,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.full,
+  },
+  selectBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  selectBarCancel: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  selectBarCancelText: {
+    ...typography.body,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  selectBarCount: {
+    ...typography.footnote,
+    color: colors.text,
+    fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
+  },
+  selectBarMove: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.full,
+  },
+  selectBarMoveText: {
+    ...typography.footnote,
+    color: colors.textOnPrimary,
+    fontWeight: '700',
+  },
+
+  // Move confirmation modal
+  moveConfirmHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  moveConfirmTitle: {
+    ...typography.headline,
+    color: colors.text,
+    flex: 1,
+    marginRight: spacing.md,
+  },
+  moveConfirmClose: {
+    ...typography.body,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  moveConfirmHint: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  moveConfirmList: {
+    padding: spacing.lg,
+    gap: spacing.sm,
+  },
+  moveConfirmRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    gap: spacing.md,
+  },
+  moveConfirmRowBody: {
+    flex: 1,
+    gap: 2,
+  },
+  moveConfirmRowName: {
+    ...typography.headline,
+    color: colors.text,
+  },
+  moveConfirmRowInfo: {
+    ...typography.footnote,
+    color: colors.textMuted,
+  },
+  moveConfirmQtyWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  moveConfirmQtyBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.palette.neutral[100],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moveConfirmQtyInput: {
+    ...typography.headline,
+    color: colors.text,
+    textAlign: 'center',
+    width: 48,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  moveConfirmFooter: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  moveConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.lg,
+    borderRadius: radius.md,
+  },
+  moveConfirmBtnText: {
+    ...typography.bodyStrong,
+    color: colors.textOnPrimary,
   },
 
   empty: {

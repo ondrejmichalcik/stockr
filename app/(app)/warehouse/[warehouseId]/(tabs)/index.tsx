@@ -1,7 +1,7 @@
 // ============================================================================
 // Stockr – Boxes tab (the list of all boxes in the current warehouse)
 // ============================================================================
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -9,12 +9,13 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { listBoxes, subscribeBoxes } from '@/src/lib/supabase';
-import type { Box } from '@/src/types/database';
+import type { Box, ExpiryStatus } from '@/src/types/database';
 import {
   compareBoxesByExpiry,
   formatExpiry,
@@ -38,6 +39,12 @@ export default function BoxesScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Search + Filter
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<ExpiryStatus | 'all'>('all');
+  const searchRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
     if (!warehouseId) return;
@@ -84,6 +91,24 @@ export default function BoxesScreen() {
 
   const sortedBoxes = useMemo(() => [...boxes].sort(compareBoxesByExpiry), [boxes]);
 
+  const filteredBoxes = useMemo(() => {
+    let result = sortedBoxes;
+    // Text search — name + location, case-insensitive
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (b) =>
+          b.name.toLowerCase().includes(q) ||
+          (b.location && b.location.toLowerCase().includes(q)),
+      );
+    }
+    // Status filter
+    if (statusFilter !== 'all') {
+      result = result.filter((b) => getExpiryStatus(b.nearest_expiry) === statusFilter);
+    }
+    return result;
+  }, [sortedBoxes, searchQuery, statusFilter]);
+
   const criticalCount = useMemo(
     () =>
       boxes.filter((b) => {
@@ -92,6 +117,20 @@ export default function BoxesScreen() {
       }).length,
     [boxes],
   );
+
+  const toggleSearch = () => {
+    if (searchVisible) {
+      setSearchQuery('');
+      setSearchVisible(false);
+    } else {
+      setSearchVisible(true);
+      setTimeout(() => searchRef.current?.focus(), 100);
+    }
+  };
+
+  const toggleFilter = (status: ExpiryStatus | 'all') => {
+    setStatusFilter((prev) => (prev === status ? 'all' : status));
+  };
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -145,12 +184,62 @@ export default function BoxesScreen() {
           </Pressable>
         }
         actions={[
-          { sfIcon: 'magnifyingglass', onPress: () => {}, label: 'Search' },
-          { sfIcon: 'line.3.horizontal.decrease', onPress: () => {}, label: 'Filter' },
+          {
+            sfIcon: searchVisible ? 'xmark' : 'magnifyingglass',
+            onPress: toggleSearch,
+            label: searchVisible ? 'Close search' : 'Search',
+          },
+          {
+            sfIcon: 'line.3.horizontal.decrease',
+            onPress: () => setStatusFilter((f) => (f === 'all' ? 'expired' : 'all')),
+            label: 'Filter',
+          },
         ]}
       />
 
-      {criticalCount > 0 && (
+      {/* Search bar */}
+      {searchVisible && (
+        <View style={styles.searchBar}>
+          <Icon sf="magnifyingglass" size={16} color={colors.textMuted} />
+          <TextInput
+            ref={searchRef}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search by name or location..."
+            placeholderTextColor={colors.textSubtle}
+            style={styles.searchInput}
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <Pressable hitSlop={8} onPress={() => setSearchQuery('')}>
+              <Icon sf="xmark.circle.fill" size={18} color={colors.textMuted} />
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      {/* Filter chips */}
+      {statusFilter !== 'all' || searchVisible ? (
+        <View style={styles.filterRow}>
+          {(['all', 'expired', 'critical', 'soon', 'ok', 'none'] as const).map((s) => {
+            const active = statusFilter === s;
+            return (
+              <Pressable
+                key={s}
+                onPress={() => toggleFilter(s)}
+                style={[styles.filterChip, active && styles.filterChipActive]}
+              >
+                <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                  {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {criticalCount > 0 && statusFilter === 'all' && !searchVisible && (
         <View style={styles.alertBanner}>
           <Icon sf="exclamationmark.triangle.fill" size={18} color={colors.danger} />
           <Text style={styles.alertText}>
@@ -160,7 +249,7 @@ export default function BoxesScreen() {
       )}
 
       <FlatList
-        data={sortedBoxes}
+        data={filteredBoxes}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         refreshControl={
@@ -173,9 +262,13 @@ export default function BoxesScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Icon brand="box-generic" size={120} style={styles.emptyIcon} />
-            <Text style={styles.emptyTitle}>No boxes yet</Text>
+            <Text style={styles.emptyTitle}>
+              {searchQuery || statusFilter !== 'all' ? 'No matches' : 'No boxes yet'}
+            </Text>
             <Text style={styles.emptyText}>
-              Create your first box and stick a QR label on it.
+              {searchQuery || statusFilter !== 'all'
+                ? 'Try a different search or filter.'
+                : 'Create your first box and stick a QR label on it.'}
             </Text>
           </View>
         }
@@ -241,6 +334,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 20,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchInput: {
+    ...typography.body,
+    flex: 1,
+    color: colors.text,
+    paddingVertical: 0,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs + 2,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  filterChip: {
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: colors.textOnPrimary,
   },
   center: {
     flex: 1,

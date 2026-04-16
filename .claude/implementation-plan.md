@@ -751,21 +751,17 @@ eas submit --platform ios
 
 Po otevření nové session a prozkoumání stavu:
 
-1. **Zkontroluj EAS build status** — [expo.dev dashboard](https://expo.dev/accounts/ondrej.michalcik/projects/stockr) — Sprint 3F build by měl být hotový z přes noc. Pokud success → `eas submit --platform ios --latest` → TestFlight processing → iPhone update.
-2. **Reálný Brother print test** — otevři Stockr na iPhonu (po TestFlight update), najdi bednu, **Print to Brother** button, podívej se na fyzický výstup:
-   - Rotace správná? (QR + název horizontálně podél tape)
-   - Velikost čitelná? (font ~10mm pro krátké, ~5mm pro střední)
-   - QR scan funguje s logem uprostřed?
-   - Margins OK? (žádný content cutoff)
-3. **Commit Sprint 3F** — až je funkční, git commit všech změn s message typu `sprint 3F — Brother SDK direct print`
-4. **Rozhodni co dál**:
-   - **Sprint 4' (offline-first)** — vysoká priorita kvůli prepper use case. Research fáze: WatermelonDB vs PowerSync vs Legend-State vs custom SQLite. Pak architectural plan + implementace.
-   - **Sprint 4 (push notifikace)** — lze kombinovat s offline pokud local scheduling (žádný server cron potřeba pro basic expiry reminders)
-   - **Sprint 5 (App Store release)** — až offline je stabilní. Screenshots, privacy policy, App Privacy disclosures, Apple review submit.
+1. **Brother print test** — EAS build s QR fix (20mm, no logo, portrait rotation) + Brother SDK patch je v queue. Po buildu: `eas submit → TestFlight update → Print to Brother`. Ověřit: QR scan reliability, font čitelnost, 1-stránkový tape, correct rotation.
+2. **Commit** — git commit všech pending changes (search/filter, move, inventura, expiry labels, Brother SDK, label fixes)
+3. **Rozhodni co dál**:
+   - **Sprint 4' (offline-first)** — vysoká priorita kvůli prepper use case. Research: WatermelonDB vs PowerSync vs Legend-State vs custom SQLite.
+   - **Sprint 4 (push notifikace)** — local scheduling pro expiry reminders (funguje i offline)
+   - **Sprint 5 (App Store release)** — screenshots, privacy policy, App Privacy disclosures, Apple review
 
-### Session 2026-04-15 — Sprint 3A/B/C/D/E UZAVŘENO + 3F 🚧
+### Session 2026-04-15 + 2026-04-16 — Sprint 3 UZAVŘEN + features
 
-Dlouhý den. Image upload pipeline + Claude Vision + Brother print prototype + TestFlight build pipeline + Brother SDK integrace. **Sprint 3F čeká na EAS cloud build** (free tier queue ~4h, buildne zítra ráno).
+**2026-04-15**: Image upload pipeline + Claude Vision + Brother print prototype + TestFlight build pipeline + Brother SDK integrace.
+**2026-04-16**: Brother print test na reálném hardware (rotation fix, QR bez loga), search + filter, move items, box inventura, UI polish.
 
 - **Sprint 3A — Image upload do Storage**: `expo-image-picker` + `expo-image-manipulator` + `expo-file-system` installed. `src/lib/storage.ts` s upload pipeline používající **new File API** místo broken `fetch+blob` (classic RN gotcha — `fetch(uri).blob()` produkoval prázdný/bílý soubor). Resize 800px width + 70% JPEG = ~80–150 KB per image. Storage RLS policies na `storage.objects` (public select, authenticated writes). `ItemEditSheet` má thumbnail tile nahoře s `ActionSheetIOS` picker. `deleteProductImage` helper s safe no-op pro external (OFF) URLs.
 - **Sprint 3B — Picker v add-items.tsx**: stejný pattern jako ItemEditSheet, ale wrapuje existující image/placeholder v Pressable. Empty state má "Tap to add photo" hint + category ikonu. `handleAddToQueue` blokuje Save během uploadu.
@@ -793,8 +789,24 @@ Dlouhý den. Image upload pipeline + Claude Vision + Brother print prototype + T
 **Otevřené drobnosti** (non-blocking):
 - Orphan cleanup v storage (cancelled drafts s uploadedem foto). Defer.
 - `visionEnabled` se čte jen na mount v add-items — pokud user nastaví klíč mid-session na Profile a hned skočí scan, refresh neproběhne (screen je v různé stack entry). Acceptable; fix přidat `useFocusEffect`.
-- Brother print Phase 2 rotation verification — waiting na zitřejší build.
-- Commit Sprint 3F jako samostatný commit až build projde a výstup je verified (patch + qrLabel rotation + 3 print buttons + expo-brother-printer-sdk deps).
+- Brother print full test na reálném hardware — EAS build s rotation fixem je v queue, real print test s 20mm QR (no logo, ECC-M) ještě neproběhl.
+
+**Session 2026-04-16 — nové features:**
+
+- **Search + filter**: Boxes tab má inline search bar (name + location) + status filter chips (All/Expired/Critical/Soon/OK/None). Items tab má search (name + box) + 3 řady filtrů (expiry status, opened/sealed, category). AND logika, counter v subtitle "X of Y".
+- **Move items mezi boxy**: unified `moveItemQuantity(id, qty|'all', targetBoxId, userId)` s merge logikou (matching item v target boxu = přičtení qty místo duplicity). Match criteria: name+barcode+expiry+category+unit+pack_count+opened. Single-item move z ItemEditSheet (s partial qty prompt přes Alert.prompt). Multi-select batch move z box detail ActionSheet "Select & move items" → checkboxy → BoxPicker modal → quantity confirmation sheet s per-item −/+/input stepper → execute. Nový `src/components/BoxPicker.tsx` reusable komponent.
+- **DB trigger fix**: `recalc_box_cache()` teď recalkuluje OBOJÍ boxy (source i target) při item move (`old.box_id IS DISTINCT FROM new.box_id`). Realtime fix: force `load()` po move protože Supabase realtime filter `box_id=eq.X` nefire pro items opouštějící box (NEW row nematchuje starý filter).
+- **Box inventura (scan & count)**: Nová route `box/[boxId]/inventory.tsx`. Plný workflow: scan items jeden po jedném (každý scan = +1), nebo scan jednou + ručně zadat počet. Opened toggle per scanned item. Manual picker pro damaged/nečitelné barcódy. Progress bar "X of Y scanned". Report fáze: summary (Full/Partial/Missing), found items s "Found X of Y" detail, NOT FOUND section. Při confirm: 3-option alert pro missing items (Go back / Keep in box / Remove missing). Reconciliation: foundQty>0 → update DB quantity+opened, foundQty=0 → DELETE item z DB, missing+remove → DELETE. `inventory_sessions` + `inventory_lines` tabulky s RLS (včetně UPDATE policy — bez ní `completed_at` update tiše selhával). `found_quantity` column pro per-item counting. Status enum: found/partial/missing. History screen `box/[boxId]/inventories.tsx` s expandable session detail (lazy-loaded lines).
+- **Date picker fix**: `themeVariant="light"` na obou DateTimePicker instancích (ItemEditSheet + add-items). Řeší invisible calendar days na iOS light theme.
+- **QR label improvements**: QR zvětšen 18→20mm, logo odstraněno z tisku (zůstává v in-app views), ECC H→M (méně modulů = větší per-module = lepší scan). Portrait PDF 24×80mm s CSS rotation fix (Brother SDK treats PDF width jako tape width). Body explicit pt dimensions + `page-break-after: avoid` → 1 stránka.
+- **Post-create screen redesign**: success checkmark header, "Box created" title, button hierarchy (Print to Brother primary → Open detail secondary → Back tertiary), UUID skrytý, víc vzduchu.
+- **Expiry label cleanup**: `formatExpiry` zjednodušen na kompaktní formát (`Expired` / `Today` / `Tomorrow` / `15d` / `2 mo` / `1 yr` / `No date`). Barvy zjednodušeny na 3+1: červená (expired) → žlutá (≤3 mo, critical+soon merged) → zelená (>3 mo) → šedá (no date). Sort priority zůstává 5-úrovňový.
+
+**Klíčová rozhodnutí 2026-04-16**:
+- **Move s merge**: když přesuneš item do boxu kde už stejný produkt je, qty se přičte (ne duplicate). Matching je strict (8 polí) ale NULL==NULL přes coalesce — konzistentní s `open_one_item` RPC.
+- **Inventura = source of truth**: scan & count nahrazuje DB quantities. Explicitní 3-way choice pro missing items (keep/remove/go back). Qty=0 = delete z DB.
+- **Brother print QR bez loga**: na 180 DPI thermal tape je logo overlay příliš agresivní pro scan reliability. Logo zůstává v in-app QR views (screen resolution je neomezená).
+- **Supabase RLS gotcha**: chybějící UPDATE policy → tiché selhání (0 rows affected, no error). Vždy audit že pro každou tabulku s RLS existují ALL čtyři policies (SELECT/INSERT/UPDATE/DELETE) pokud je potřebujeme.
 
 ### Session 2026-04-14 — Sprint 2.7 UZAVŘEN ✅
 

@@ -9,6 +9,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -21,8 +22,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { deleteItem, openOneItem, updateItem } from '@/src/lib/supabase';
+import {
+  deleteItem,
+  moveItemQuantity,
+  openOneItem,
+  supabase,
+  updateItem,
+} from '@/src/lib/supabase';
 import { deleteProductImage, uploadProductImage } from '@/src/lib/storage';
+import { BoxPicker } from './BoxPicker';
 import {
   CATEGORIES,
   UNITS,
@@ -49,6 +57,9 @@ export interface ItemEditSheetProps {
    * on box detail, manual reload on Items tab).
    */
   onOpened?: (opened: Item) => void;
+  /** Called after item was moved (partially or fully) to another box.
+   *  Parents should reload their item list. */
+  onMoved?: () => void;
 }
 
 interface Draft {
@@ -68,6 +79,7 @@ export function ItemEditSheet({
   onSaved,
   onDeleted,
   onOpened,
+  onMoved,
 }: ItemEditSheetProps) {
   const [draft, setDraft] = useState<Draft>({
     name: item.name,
@@ -81,6 +93,7 @@ export function ItemEditSheet({
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [showBoxPicker, setShowBoxPicker] = useState(false);
   const [quantityText, setQuantityText] = useState(
     Number.isInteger(item.quantity) ? String(item.quantity) : item.quantity.toString(),
   );
@@ -221,6 +234,79 @@ export function ItemEditSheet({
         },
       ],
     );
+  };
+
+  // ---- Move to another box -------------------------------------------------
+
+  const handleMoveToBox = async (targetBox: { id: string; name: string }) => {
+    setShowBoxPicker(false);
+
+    const doMove = async (qty: number | 'all') => {
+      try {
+        setSaving(true);
+        const { data: sess } = await supabase.auth.getSession();
+        const userId = sess.session?.user.id ?? '';
+        await moveItemQuantity(item.id, qty, targetBox.id, userId);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        onMoved?.();
+        onClose();
+      } catch (e: any) {
+        setSaving(false);
+        Alert.alert('Error', e?.message ?? 'Cannot move item.');
+      }
+    };
+
+    if (item.quantity <= 1) {
+      // Only 1 unit — move it directly
+      Alert.alert(
+        'Move item',
+        `Move "${item.name}" to "${targetBox.name}"?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Move', onPress: () => doMove('all') },
+        ],
+      );
+    } else {
+      // Multiple units — ask how many
+      Alert.alert(
+        'Move how many?',
+        `"${item.name}" has ${item.quantity} ${item.unit}. Move all or just some to "${targetBox.name}"?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Move all', onPress: () => doMove('all') },
+          {
+            text: 'Choose amount',
+            onPress: () => {
+              Alert.prompt(
+                'How many to move?',
+                `Enter quantity (1–${item.quantity - 1}):`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Move',
+                    onPress: (text?: string) => {
+                      const n = parseInt(text ?? '', 10);
+                      if (!n || n <= 0) {
+                        Alert.alert('Invalid', 'Enter a positive number.');
+                        return;
+                      }
+                      if (n >= item.quantity) {
+                        doMove('all');
+                      } else {
+                        doMove(n);
+                      }
+                    },
+                  },
+                ],
+                'plain-text',
+                '1',
+                'number-pad',
+              );
+            },
+          },
+        ],
+      );
+    }
   };
 
   const handleDelete = () => {
@@ -393,6 +479,7 @@ export function ItemEditSheet({
                 value={fromIsoDate(draft.expiry_date ?? '') ?? new Date()}
                 mode="date"
                 display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                themeVariant="light"
                 minimumDate={new Date(2000, 0, 1)}
                 locale="en-GB"
                 onChange={(event: DateTimePickerEvent, selected?: Date) => {
@@ -429,6 +516,17 @@ export function ItemEditSheet({
           )}
 
           <Pressable
+            style={[styles.moveBtn, saving && { opacity: 0.5 }]}
+            onPress={() => setShowBoxPicker(true)}
+            disabled={saving}
+          >
+            <View style={styles.moveBtnContent}>
+              <Icon sf="arrow.right.arrow.left" size={18} color={colors.primary} />
+              <Text style={styles.moveBtnText}>Move to another box</Text>
+            </View>
+          </Pressable>
+
+          <Pressable
             style={[styles.deleteBtn, saving && { opacity: 0.5 }]}
             onPress={handleDelete}
             disabled={saving}
@@ -440,6 +538,21 @@ export function ItemEditSheet({
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Box picker for move */}
+      <Modal
+        visible={showBoxPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowBoxPicker(false)}
+      >
+        <BoxPicker
+          warehouseId={warehouseId}
+          excludeBoxId={item.box_id}
+          onSelect={(box) => handleMoveToBox(box)}
+          onClose={() => setShowBoxPicker(false)}
+        />
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -633,6 +746,25 @@ const styles = StyleSheet.create({
   openBtnText: {
     ...typography.subhead,
     color: colors.warningText,
+    fontWeight: '700',
+  },
+  moveBtn: {
+    marginTop: spacing.lg,
+    paddingVertical: spacing.md + 2,
+    borderRadius: radius.md,
+    backgroundColor: colors.primaryTint,
+    borderWidth: 1,
+    borderColor: colors.primarySubtle,
+    alignItems: 'center',
+  },
+  moveBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  moveBtnText: {
+    ...typography.subhead,
+    color: colors.primary,
     fontWeight: '700',
   },
   deleteBtn: {

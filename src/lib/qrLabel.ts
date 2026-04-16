@@ -64,7 +64,7 @@ function escapeHtml(s: string): string {
  * is the final safety net.
  */
 function computeNameFontSize(name: string, hasLocation: boolean): number {
-  const TEXT_AREA_WIDTH_MM = 54; // 80 − 2×2 padding − 18 QR − 4 gap
+  const TEXT_AREA_WIDTH_MM = 52; // 80 − 2×2 padding − 20 QR − 4 gap
   const CHAR_WIDTH_RATIO = 0.62;
   const widthCap = TEXT_AREA_WIDTH_MM / (Math.max(1, name.length) * CHAR_WIDTH_RATIO);
   const heightCap = hasLocation ? 9 : 13;
@@ -88,18 +88,20 @@ function computeNameFontSize(name: string, hasLocation: boolean): number {
 export async function buildLabelHtml(
   box: Pick<Box, 'name' | 'qr_code' | 'location'>,
 ): Promise<string> {
-  // Error correction level H = 30% damage tolerance. Required so we can
-  // overlay a Stockr logo in the QR center and still scan reliably.
+  // Error correction level M = 15% damage tolerance. No logo overlay in
+  // the printed QR — logo lives only in the in-app screen views where
+  // resolution is high. Fewer ECC codewords = fewer modules = bigger
+  // individual modules on the 20mm physical print = better scan reliability
+  // from phone cameras at arm's length.
   const svg = await QRCode.toString(box.qr_code, {
     type: 'svg',
     margin: 0,
-    errorCorrectionLevel: 'H',
+    errorCorrectionLevel: 'M',
   });
 
   const name = escapeHtml(box.name);
   const location = box.location ? escapeHtml(box.location) : null;
   const nameFontSize = computeNameFontSize(box.name, !!box.location);
-  const logoDataUri = await loadLogoDataUri();
 
   // Layout strategy:
   // - PDF page is **portrait** (68 × 227 pt ≈ 24 × 80 mm) because
@@ -126,12 +128,17 @@ export async function buildLabelHtml(
     @page { size: ${TAPE_WIDTH_PT}pt ${LABEL_LENGTH_PT}pt; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
-      width: 100%;
-      height: 100%;
+      width: ${TAPE_WIDTH_PT}pt;
+      height: ${LABEL_LENGTH_PT}pt;
+      max-height: ${LABEL_LENGTH_PT}pt;
       overflow: hidden;
       font-family: -apple-system, "Helvetica Neue", Helvetica, sans-serif;
       color: #000;
       background: #fff;
+      /* Prevent WebView from adding a second page when .label is
+         absolute-positioned (out of flow → body sees zero content
+         height → some renderers insert a blank trailing page). */
+      page-break-after: avoid;
     }
     .label {
       /* Designed horizontally at landscape dimensions, then rotated 90°
@@ -153,36 +160,17 @@ export async function buildLabelHtml(
     .qr {
       position: relative;
       flex-shrink: 0;
-      width: 18mm;
-      height: 18mm;
+      width: 20mm;
+      height: 20mm;
     }
     .qr svg {
       width: 100%;
       height: 100%;
       display: block;
     }
-    /* 7.5mm square overlay — ~42% of QR width, ~17% of QR area. Comfortable
-       safety margin under the ECC-H 30% area tolerance so the QR scans
-       reliably from various angles/distances. White background is baked
-       into the PNG, a hairline border visually separates the logo from
-       the surrounding QR modules. */
-    .qr-logo {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 7.5mm;
-      height: 7.5mm;
-      transform: translate(-50%, -50%);
-      border-radius: 1mm;
-      background: #fff;
-      display: block;
-      overflow: hidden;
-    }
-    .qr-logo img {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
+    /* No logo overlay on printed label — at 20mm physical QR on 180 DPI
+       thermal tape, every module counts for scan reliability. Logo lives
+       only in the in-app screen views where resolution is unlimited. */
     .text {
       flex: 1;
       min-width: 0;
@@ -209,10 +197,7 @@ export async function buildLabelHtml(
 </head>
 <body>
   <div class="label">
-    <div class="qr">
-      ${svg}
-      ${logoDataUri ? `<div class="qr-logo"><img src="${logoDataUri}" alt="" /></div>` : ''}
-    </div>
+    <div class="qr">${svg}</div>
     <div class="text">
       <div class="name" style="font-size: ${nameFontSize}mm">${name}</div>
       ${location ? `<div class="loc">${location}</div>` : ''}

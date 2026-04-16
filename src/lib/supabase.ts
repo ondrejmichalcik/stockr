@@ -8,6 +8,9 @@ import type {
   Box,
   CustomProduct,
   Invitation,
+  InventoryLine,
+  InventoryLineStatus,
+  InventorySession,
   Item,
   ItemWithBox,
   Role,
@@ -411,6 +414,144 @@ export async function updateItem(id: string, patch: Partial<NewItemInput>) {
 }
 
 /**
+ * Find an item in `targetBoxId` that matches the source item's product
+ * identity (name + barcode + expiry + category + unit + pack_count +
+ * opened). Used by `moveItemQuantity` to merge instead of duplicating
+ * when moving items between boxes.
+ */
+async function findMatchingItemInBox(
+  targetBoxId: string,
+  src: Item,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('items')
+    .select('id, name, barcode, expiry_date, category, unit, pack_count, opened')
+    .eq('box_id', targetBoxId);
+  if (error || !data) return null;
+
+  const match = (data as Item[]).find(
+    (row) =>
+      row.name === src.name &&
+      (row.barcode ?? '') === (src.barcode ?? '') &&
+      (row.expiry_date ?? '') === (src.expiry_date ?? '') &&
+      (row.category ?? '') === (src.category ?? '') &&
+      row.unit === src.unit &&
+      (row.pack_count ?? 0) === (src.pack_count ?? 0) &&
+      row.opened === src.opened,
+  );
+  return match?.id ?? null;
+}
+
+/**
+ * Unified move: move `quantity` units of an item to another box, merging
+ * with an existing matching item in the target when one exists.
+ *
+ * Merge criteria: same name + barcode + expiry_date + category + unit +
+ * pack_count + opened (identical to `open_one_item` RPC matching).
+ *
+ * Behaviour matrix:
+ * | Match in target? | Moving all? | Result                                    |
+ * |------------------|-------------|-------------------------------------------|
+ * | No               | Yes         | Update source box_id (efficient, no dup)  |
+ * | No               | Partial     | Decrement source, insert new in target    |
+ * | Yes              | Yes         | Increment match qty, delete source        |
+ * | Yes              | Partial     | Increment match qty, decrement source     |
+ */
+export async function moveItemQuantity(
+  itemId: string,
+  quantity: number | 'all',
+  targetBoxId: string,
+  addedBy: string,
+): Promise<void> {
+  const { data: srcData, error: srcErr } = await supabase
+    .from('items')
+    .select('*')
+    .eq('id', itemId)
+    .single();
+  if (srcErr) throw srcErr;
+  if (!srcData) throw new Error('Item not found.');
+  const src = srcData as Item;
+
+  const moveQty = quantity === 'all' ? src.quantity : Math.min(quantity, src.quantity);
+  const movingAll = moveQty >= src.quantity;
+
+  // Check for a matching item in the target box.
+  const matchId = await findMatchingItemInBox(targetBoxId, src);
+
+  if (matchId) {
+    // MERGE: increment the existing target row's quantity.
+    const { data: matchData } = await supabase
+      .from('items')
+      .select('quantity')
+      .eq('id', matchId)
+      .single();
+    const newTargetQty = ((matchData as any)?.quantity ?? 0) + moveQty;
+    const { error: updErr } = await supabase
+      .from('items')
+      .update({ quantity: newTargetQty })
+      .eq('id', matchId);
+    if (updErr) throw updErr;
+
+    // Source: delete when all moved, decrement otherwise.
+    if (movingAll) {
+      const { error: delErr } = await supabase.from('items').delete().eq('id', itemId);
+      if (delErr) throw delErr;
+    } else {
+      const { error: decErr } = await supabase
+        .from('items')
+        .update({ quantity: src.quantity - moveQty })
+        .eq('id', itemId);
+      if (decErr) throw decErr;
+    }
+  } else {
+    // NO MATCH: move or split without merging.
+    if (movingAll) {
+      // Efficient: just change box_id, no new row.
+      const { error: mvErr } = await supabase
+        .from('items')
+        .update({ box_id: targetBoxId })
+        .eq('id', itemId);
+      if (mvErr) throw mvErr;
+    } else {
+      // Split: decrement source, create new in target.
+      const { error: decErr } = await supabase
+        .from('items')
+        .update({ quantity: src.quantity - moveQty })
+        .eq('id', itemId);
+      if (decErr) throw decErr;
+      const { error: insErr } = await supabase.from('items').insert({
+        box_id: targetBoxId,
+        name: src.name,
+        quantity: moveQty,
+        unit: src.unit,
+        expiry_date: src.expiry_date,
+        barcode: src.barcode,
+        image_url: src.image_url,
+        category: src.category,
+        notes: src.notes,
+        opened: src.opened,
+        pack_count: src.pack_count,
+        added_by: addedBy,
+      });
+      if (insErr) throw insErr;
+    }
+  }
+}
+
+/**
+ * Bulk-verify items: set `last_verified = now()` for all given item IDs.
+ * Used at the end of a box inventory session to stamp verified items.
+ */
+export async function verifyItems(itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) return;
+  const { error } = await supabase
+    .from('items')
+    .update({ last_verified: new Date().toISOString() })
+    .in('id', itemIds);
+  if (error) throw error;
+}
+
+/**
  * "Open one unit" — atomic split via the `open_one_item` RPC.
  * Decrements (or deletes) the sealed source and upserts a matching opened
  * sibling in the same box. Returns the opened sibling row so the caller
@@ -527,6 +668,110 @@ export async function acceptInvitation(token: string, userId: string): Promise<W
   if (whErr) throw whErr;
   return wh as Warehouse;
 }
+
+// ============================================================================
+// INVENTORY SESSIONS
+// ============================================================================
+
+export async function createInventorySession(
+  boxId: string,
+  performedBy: string,
+): Promise<InventorySession> {
+  const { data, error } = await supabase
+    .from('inventory_sessions')
+    .insert({ box_id: boxId, performed_by: performedBy })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as InventorySession;
+}
+
+export async function completeInventorySession(
+  sessionId: string,
+  lines: { item_id: string | null; item_name: string; item_quantity: number; item_unit: string; found_quantity: number; status: InventoryLineStatus; scanned_barcode: string | null }[],
+  foundItemIds: string[],
+): Promise<void> {
+  const foundCount = lines.filter((l) => l.status === 'found').length;
+  const missingCount = lines.filter((l) => l.status === 'missing').length;
+
+  // Insert all inventory lines
+  if (lines.length > 0) {
+    const rows = lines.map((l) => ({ session_id: sessionId, ...l }));
+    const { error: lErr } = await supabase.from('inventory_lines').insert(rows);
+    if (lErr) throw lErr;
+  }
+
+  // Mark session complete
+  const { error: sErr } = await supabase
+    .from('inventory_sessions')
+    .update({
+      completed_at: new Date().toISOString(),
+      found_count: foundCount,
+      missing_count: missingCount,
+    })
+    .eq('id', sessionId);
+  if (sErr) throw sErr;
+
+  // Update last_verified on found items
+  if (foundItemIds.length > 0) {
+    const { error: vErr } = await supabase
+      .from('items')
+      .update({ last_verified: new Date().toISOString() })
+      .in('id', foundItemIds);
+    if (vErr) throw vErr;
+  }
+}
+
+export async function listInventorySessions(
+  boxId: string,
+): Promise<(InventorySession & { user: { display_name: string | null; email: string | null } | null })[]> {
+  // Step 1: fetch sessions without join (avoids PostgREST FK detection issues)
+  const { data, error } = await supabase
+    .from('inventory_sessions')
+    .select('*')
+    .eq('box_id', boxId)
+    .order('created_at', { ascending: false });
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.warn('[listInventorySessions] query error:', error.message);
+    throw error;
+  }
+  const sessions = ((data as InventorySession[]) ?? []).filter(
+    (s) => s.completed_at != null,
+  );
+
+  // Step 2: resolve user display names separately
+  const userIds = [...new Set(sessions.map((s) => s.performed_by))];
+  let userMap: Record<string, { display_name: string | null; email: string | null }> = {};
+  if (userIds.length > 0) {
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, display_name, email')
+      .in('id', userIds);
+    for (const u of (users ?? []) as any[]) {
+      userMap[u.id] = { display_name: u.display_name, email: u.email };
+    }
+  }
+
+  return sessions.map((s) => ({
+    ...s,
+    user: userMap[s.performed_by] ?? { display_name: null, email: null },
+  }));
+}
+
+export async function getInventoryLines(sessionId: string): Promise<InventoryLine[]> {
+  const { data, error } = await supabase
+    .from('inventory_lines')
+    .select('*')
+    .eq('session_id', sessionId)
+    .order('status', { ascending: true });
+  if (error) throw error;
+  return (data as InventoryLine[]) ?? [];
+}
+
+// ============================================================================
+// INVITATIONS
+// ============================================================================
 
 export function buildInviteLink(token: string): string {
   return `stockr://invite/${token}`;

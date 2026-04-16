@@ -786,6 +786,7 @@ export default function AddItemsScreen() {
                   value={fromIsoDate(draft.expiry_date ?? '') ?? new Date()}
                   mode="date"
                   display={Platform.OS === 'ios' ? 'inline' : 'default'}
+                  themeVariant="light"
                   minimumDate={new Date(2000, 0, 1)}
                   locale="en-GB"
                   onChange={(event: DateTimePickerEvent, selected?: Date) => {

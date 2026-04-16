@@ -113,6 +113,7 @@ export interface Item {
   notes: string | null;
   opened: boolean;
   pack_count: number | null;
+  last_verified: string | null;
   added_by: string | null;
   created_at: string;
   updated_at: string;
@@ -138,6 +139,33 @@ export interface CustomProduct {
   created_at: string;
 }
 
+export interface InventorySession {
+  id: string;
+  box_id: string;
+  performed_by: string;
+  started_at: string;
+  completed_at: string | null;
+  found_count: number;
+  missing_count: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export type InventoryLineStatus = 'found' | 'missing' | 'partial';
+
+export interface InventoryLine {
+  id: string;
+  session_id: string;
+  item_id: string | null;
+  item_name: string;
+  item_quantity: number;
+  item_unit: string;
+  found_quantity: number;
+  status: InventoryLineStatus;
+  scanned_barcode: string | null;
+  created_at: string;
+}
+
 // ----------------------------------------------------------------------------
 // Expiry status
 // ----------------------------------------------------------------------------
@@ -149,10 +177,13 @@ export interface ExpiryPalette {
   fg: string;
 }
 
+// Simplified 3-color scheme: red (expired) → yellow (≤3 mo) → green (>3 mo).
+// "critical" and "soon" share the same yellow palette — the distinction
+// only matters for sort priority, not visual treatment.
 export const EXPIRY_COLORS: Record<Exclude<ExpiryStatus, 'none'>, ExpiryPalette> = {
   ok: { bg: colors.expiryOkBg, fg: colors.expiryOkText },
   soon: { bg: colors.expirySoonBg, fg: colors.expirySoonText },
-  critical: { bg: colors.expiryCriticalBg, fg: colors.expiryCriticalText },
+  critical: { bg: colors.expirySoonBg, fg: colors.expirySoonText },
   expired: { bg: colors.expiryExpiredBg, fg: colors.expiryExpiredText },
 };
 
@@ -230,13 +261,12 @@ export function fromIsoDate(dateStr: string): Date | null {
 export function formatExpiry(dateStr: string | null): string {
   if (!dateStr) return 'No date';
   const days = daysUntil(dateStr);
-  if (days < -1) return `Expired ${Math.abs(days)} days ago`;
-  if (days === -1) return 'Expired yesterday';
-  if (days === 0) return 'Expires today';
-  if (days === 1) return 'Expires tomorrow';
-  if (days <= 30) return `Expires in ${days} days`;
-  if (days <= 365) return `Expires in ${Math.round(days / 30)} mo`;
-  return `Expires in ${Math.round(days / 365)} yr`;
+  if (days < 0) return 'Expired';
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days <= 30) return `${days}d`;
+  if (days <= 365) return `${Math.round(days / 30)} mo`;
+  return `${Math.round(days / 365)} yr`;
 }
 
 /**
@@ -259,6 +289,23 @@ export function compareBoxesByExpiry(a: Box, b: Box): number {
     return a.nearest_expiry.localeCompare(b.nearest_expiry);
   }
   return a.name.localeCompare(b.name);
+}
+
+/**
+ * Format the "last verified" timestamp as a human-readable relative string.
+ * Returns null when the item has never been verified.
+ */
+export function formatVerified(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  const verified = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - verified.getTime();
+  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'Verified today';
+  if (days === 1) return 'Verified yesterday';
+  if (days < 30) return `Verified ${days}d ago`;
+  if (days < 365) return `Verified ${Math.round(days / 30)}mo ago`;
+  return `Verified ${Math.round(days / 365)}y ago`;
 }
 
 /**

@@ -93,6 +93,7 @@ create table if not exists public.items (
   notes        text,
   opened       boolean not null default false,
   pack_count   int,
+  last_verified timestamptz,
   added_by     uuid references public.users(id) on delete set null,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
@@ -100,6 +101,38 @@ create table if not exists public.items (
 
 create index if not exists idx_items_box on public.items(box_id);
 create index if not exists idx_items_expiry on public.items(expiry_date);
+
+-- inventory_sessions — one row per inventory check on a box
+create table if not exists public.inventory_sessions (
+  id              uuid primary key default gen_random_uuid(),
+  box_id          uuid not null references public.boxes(id) on delete cascade,
+  performed_by    uuid not null references public.users(id) on delete set null,
+  started_at      timestamptz not null default now(),
+  completed_at    timestamptz,
+  found_count     int not null default 0,
+  missing_count   int not null default 0,
+  notes           text,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists idx_inventory_sessions_box on public.inventory_sessions(box_id);
+
+-- inventory_lines — snapshot of each item's status during an inventory session
+-- item_name/quantity/unit are snapshots (item might change or be deleted later)
+create table if not exists public.inventory_lines (
+  id              uuid primary key default gen_random_uuid(),
+  session_id      uuid not null references public.inventory_sessions(id) on delete cascade,
+  item_id         uuid references public.items(id) on delete set null,
+  item_name       text not null,
+  item_quantity   numeric not null,
+  item_unit       text not null,
+  found_quantity  numeric not null default 0,
+  status          text not null check (status in ('found', 'missing', 'partial')),
+  scanned_barcode text,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists idx_inventory_lines_session on public.inventory_lines(session_id);
 
 -- custom_products – lokální DB pro každý sklad
 create table if not exists public.custom_products (
@@ -142,6 +175,12 @@ alter table public.custom_products drop column if exists pack_size;
 alter table public.custom_products drop column if exists pack_unit;
 alter table public.items add column if not exists opened boolean not null default false;
 alter table public.items add column if not exists pack_count int;
+alter table public.items add column if not exists last_verified timestamptz;
+
+-- inventory_lines: add found_quantity + relax status check for 'partial' (Sprint 3 inventory rewrite)
+alter table public.inventory_lines add column if not exists found_quantity numeric not null default 0;
+alter table public.inventory_lines drop constraint if exists inventory_lines_status_check;
+alter table public.inventory_lines add constraint inventory_lines_status_check check (status in ('found', 'missing', 'partial'));
 
 -- ============================================================================
 -- FUNCTIONS + TRIGGERS
@@ -167,7 +206,10 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- Přepočet nearest_expiry a item_count na boxu po změně items
+-- Přepočet nearest_expiry a item_count na boxu po změně items.
+-- When an item moves between boxes (box_id changes), BOTH the source and
+-- target box must be recalculated — otherwise the source keeps stale
+-- item_count / nearest_expiry and the Boxes list shows wrong numbers.
 create or replace function public.recalc_box_cache()
 returns trigger
 language plpgsql
@@ -187,6 +229,22 @@ begin
     ),
     updated_at = now()
   where id = target_box;
+
+  -- When item moved between boxes, also recalculate the source box.
+  if TG_OP = 'UPDATE' and old.box_id is distinct from new.box_id then
+    update public.boxes
+    set
+      item_count = (
+        select count(*) from public.items where box_id = old.box_id
+      ),
+      nearest_expiry = (
+        select min(expiry_date) from public.items
+        where box_id = old.box_id and expiry_date is not null
+      ),
+      updated_at = now()
+    where id = old.box_id;
+  end if;
+
   return null;
 end;
 $$;
@@ -426,6 +484,8 @@ alter table public.invitations enable row level security;
 alter table public.boxes enable row level security;
 alter table public.items enable row level security;
 alter table public.custom_products enable row level security;
+alter table public.inventory_sessions enable row level security;
+alter table public.inventory_lines enable row level security;
 
 -- users: každý vidí sám sebe a členy svých skladů
 drop policy if exists users_self on public.users;
@@ -534,6 +594,37 @@ drop policy if exists items_delete on public.items;
 create policy items_delete on public.items for delete
   using (public.is_member((select warehouse_id from public.boxes where id = box_id)));
 
+-- inventory_sessions: members of the box's warehouse can CRUD
+drop policy if exists inventory_sessions_select on public.inventory_sessions;
+create policy inventory_sessions_select on public.inventory_sessions for select
+  using (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+drop policy if exists inventory_sessions_insert on public.inventory_sessions;
+create policy inventory_sessions_insert on public.inventory_sessions for insert
+  with check (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+drop policy if exists inventory_sessions_update on public.inventory_sessions;
+create policy inventory_sessions_update on public.inventory_sessions for update
+  using (public.is_member((select warehouse_id from public.boxes where id = box_id)))
+  with check (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+drop policy if exists inventory_sessions_delete on public.inventory_sessions;
+create policy inventory_sessions_delete on public.inventory_sessions for delete
+  using (public.is_member((select warehouse_id from public.boxes where id = box_id)));
+
+-- inventory_lines: access via session → box → warehouse membership
+drop policy if exists inventory_lines_select on public.inventory_lines;
+create policy inventory_lines_select on public.inventory_lines for select
+  using (public.is_member((select warehouse_id from public.boxes where id = (
+    select box_id from public.inventory_sessions where id = session_id
+  ))));
+
+drop policy if exists inventory_lines_insert on public.inventory_lines;
+create policy inventory_lines_insert on public.inventory_lines for insert
+  with check (public.is_member((select warehouse_id from public.boxes where id = (
+    select box_id from public.inventory_sessions where id = session_id
+  ))));
+
 -- custom_products: členové CRUD
 drop policy if exists custom_products_select on public.custom_products;
 create policy custom_products_select on public.custom_products for select
@@ -578,6 +669,11 @@ end $$;
 
 do $$ begin
   alter publication supabase_realtime add table public.warehouse_members;
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.inventory_sessions;
 exception when duplicate_object then null;
 end $$;
 

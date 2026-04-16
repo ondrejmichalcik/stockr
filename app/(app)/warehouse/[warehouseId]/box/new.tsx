@@ -82,11 +82,13 @@ export default function NewBoxScreen() {
           >
             <Icon sf="chevron.left" size={22} color={colors.text} />
           </Pressable>
-          <Text style={styles.topBarTitle}>QR label</Text>
+          <Text style={styles.topBarTitle}>Box created</Text>
           <View style={styles.topBarBtn} />
         </View>
 
         <ScrollView contentContainerStyle={styles.qrScroll}>
+          {/* Success header */}
+          <Icon sf="checkmark.circle.fill" size={48} color={colors.success} />
           <Text style={styles.qrTitle}>{createdBox.name}</Text>
           {createdBox.location ? (
             <View style={styles.qrLocationRow}>
@@ -98,58 +100,60 @@ export default function NewBoxScreen() {
           <View style={styles.qrWrap}>
             <QRCode
               value={createdBox.qr_code}
-              size={220}
+              size={200}
               backgroundColor="#FFFFFF"
               ecl="H"
               logo={require('@/assets/label-logo.png')}
-              logoSize={92}
+              logoSize={84}
               logoBackgroundColor="#FFFFFF"
               logoMargin={0}
-              logoBorderRadius={12}
+              logoBorderRadius={10}
             />
           </View>
 
-          <Text style={styles.qrCodeText}>{createdBox.qr_code}</Text>
-
           <View style={styles.qrHint}>
             <Text style={styles.qrHintText}>
-              Stick this QR code on the box. Scanning it in the app opens its detail.
+              Print this label and stick it on the box. Scanning the QR code opens the box
+              detail instantly.
             </Text>
           </View>
 
+          {/* Primary: Print label */}
           <Pressable
             style={({ pressed }) => [
-              styles.printBtn,
+              styles.btnPrimary,
               printing && { opacity: 0.6 },
-              pressed && !printing && { opacity: 0.7 },
+              pressed && !printing && { opacity: 0.8 },
             ]}
             onPress={handlePrint}
             disabled={printing}
           >
             {printing ? (
-              <ActivityIndicator color={colors.primary} />
+              <ActivityIndicator color={colors.textOnPrimary} />
             ) : (
-              <>
-                <Icon sf="printer.fill" size={18} color={colors.primary} />
-                <Text style={styles.printBtnText}>Print to Brother</Text>
-              </>
+              <View style={styles.btnRow}>
+                <Icon sf="printer.fill" size={18} color={colors.textOnPrimary} />
+                <Text style={styles.btnPrimaryText}>Print to Brother</Text>
+              </View>
             )}
           </Pressable>
 
+          {/* Secondary: Open detail */}
           <Pressable
-            style={styles.btnPrimary}
+            style={({ pressed }) => [styles.btnSecondary, pressed && { opacity: 0.7 }]}
             onPress={() =>
               router.replace(`/warehouse/${warehouseId}/box/${createdBox.id}` as any)
             }
           >
-            <Text style={styles.btnPrimaryText}>Open box detail</Text>
+            <Text style={styles.btnSecondaryText}>Open box detail</Text>
           </Pressable>
 
+          {/* Tertiary: Back */}
           <Pressable
-            style={styles.btnSecondary}
+            style={({ pressed }) => [styles.btnTertiary, pressed && { opacity: 0.5 }]}
             onPress={() => router.replace(`/warehouse/${warehouseId}` as any)}
           >
-            <Text style={styles.btnSecondaryText}>Back to boxes</Text>
+            <Text style={styles.btnTertiaryText}>Back to boxes</Text>
           </Pressable>
         </ScrollView>
       </SafeAreaView>
@@ -258,23 +262,30 @@ const styles = StyleSheet.create({
     ...shadows.sm,
   },
   btnPrimary: {
-    marginTop: spacing.lg,
+    marginTop: spacing.xl,
     paddingVertical: spacing.lg,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'stretch',
     backgroundColor: colors.primary,
   },
   btnPrimaryText: {
     ...typography.bodyStrong,
     color: colors.textOnPrimary,
   },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
   btnSecondary: {
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
     paddingVertical: spacing.lg,
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'stretch',
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
@@ -284,32 +295,27 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: '600',
   },
-  printBtn: {
-    marginTop: spacing.lg,
-    flexDirection: 'row',
+  btnTertiary: {
+    marginTop: spacing.xs,
+    paddingVertical: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.lg,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryTint,
-    borderWidth: 1,
-    borderColor: colors.primarySubtle,
   },
-  printBtnText: {
-    ...typography.body,
-    color: colors.primary,
-    fontWeight: '700',
+  btnTertiaryText: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    fontWeight: '600',
   },
   // QR preview
   qrScroll: {
     padding: spacing.xl,
+    paddingTop: spacing.lg,
     alignItems: 'center',
   },
   qrTitle: {
     ...typography.title1,
     color: colors.text,
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
   },
   qrLocationRow: {
     flexDirection: 'row',
@@ -323,23 +329,17 @@ const styles = StyleSheet.create({
   },
   qrWrap: {
     marginTop: spacing.xl,
-    padding: spacing.lg,
+    padding: spacing.xl,
     backgroundColor: '#FFFFFF',
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     ...shadows.md,
-  },
-  qrCodeText: {
-    marginTop: spacing.lg,
-    fontSize: 11,
-    color: colors.textSubtle,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   qrHint: {
     backgroundColor: colors.primaryTint,
     borderWidth: 1,
     borderColor: colors.primarySubtle,
     borderRadius: radius.md,
-    padding: spacing.md,
+    padding: spacing.md + 2,
     marginTop: spacing.xl,
     alignSelf: 'stretch',
   },
