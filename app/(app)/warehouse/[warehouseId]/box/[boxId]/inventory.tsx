@@ -24,6 +24,7 @@ import {
   completeInventorySession,
   createInventorySession,
   deleteItem,
+  getActiveUserId,
   getBoxById,
   listItems,
   supabase,
@@ -83,8 +84,7 @@ export default function InventoryScreen() {
         const [b, is] = await Promise.all([getBoxById(boxId), listItems(boxId)]);
         setBox(b);
         setItems(is);
-        const { data: sess } = await supabase.auth.getSession();
-        const userId = sess.session?.user.id;
+        const userId = await getActiveUserId();
         if (userId) {
           const session = await createInventorySession(boxId, userId);
           setSessionId(session.id);

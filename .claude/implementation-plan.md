@@ -548,12 +548,12 @@ Po zjištění že iOS system print dialog Bluetooth tiskárnu nevidí a Brother
 ### Local expiry notifications
 - ✅ `src/lib/notifications.ts` — `expo-notifications` local scheduling
 - ✅ Idempotent reschedule: cancel all → re-schedule z SQLite dat při každém app foreground
-- ✅ 4 reminder windows: 30d, 7d, 1d, today — **user-configurable** toggles v Profile
-- ✅ Already-expired items: reminder pro items co expirly v posledních 3 dnech (tomorrow 8:00)
+- ✅ **3 reminder windows: 60d, 30d, 1d** (2026-04-18 redesign — viz session níže) — user-configurable v Profile
+- ✅ **Grouped notifications** — jedna notifikace per (window, crossing day) se seznamem itemů co toho dne překračují threshold. Title např. "3 items with ≤30 days", body list jmen + "+N more"
+- ✅ Notification tap → `/alerts/[window]` screen s aktuálním filtrovaným seznamem (cross-warehouse)
 - ✅ iOS ~64 notification limit → cap na 60, sorted by nearest trigger
-- ✅ App badge count = počet items expirujících do 30 dní
+- ✅ App badge count = počet items expirujících do 60 dní (widest window)
 - ✅ Foreground handler — notifikace se zobrazí i když je app otevřená
-- ✅ Notification tap → deep link na box detail (`warehouseId` + `boxId` v notification data)
 - ✅ Global on/off toggle + per-window toggles v Profile screenu
 - ✅ Vše lokální — žádný server push, funguje plně offline
 
@@ -561,13 +561,15 @@ Po zjištění že iOS system print dialog Bluetooth tiskárnu nevidí a Brother
 
 ## Sprint 5 – App Store Release ⏳
 
-### EAS Build (in progress 2026-04-18)
+### EAS Build
 - ✅ `eas.json` konfigurace (preview profile pro TestFlight)
-- ✅ Předchozí TestFlight buildy fungují (Sprint 3)
-- 🚧 **Nový build s nativními moduly** — `eas build --platform ios --profile preview` spuštěn 2026-04-18
-  - Nové nativní deps: `expo-network`, `expo-sqlite`, `expo-notifications`, `expo-document-picker`, `stockr-multipeer` (custom Expo module)
-  - Po buildu: `eas submit --platform ios --latest` → TestFlight
-- ⏳ Test na 2 zařízeních: offline flow, P2P sync, image cache, session persistence, invite deep link, notifications
+- ✅ **Build 16** (2026-04-18) — TestFlight, reálný multi-device test
+  - Odhalilo řadu edge-case bugů (invite RLS, sync, offline auth, P2P crash, filter UX) — viz "Session 2026-04-18 — post-TestFlight bug-fix pass" níže
+  - Všechny fixed; velká část jde jako OTA update, native changes (Info.plist Bonjour services, Swift MPC validace) čekají na build 17
+- 🚧 **Build 17 pending** — `eas build --profile preview --platform ios` po commitnutí fixes
+  - Info.plist správný `NSBonjourServices` (jinak P2P instant crash)
+  - Swift displayName validace v P2P module
+- ⏳ Re-test 2 devices po build 17: invite accept, sign-out + continue offline, P2P sync
 
 ### App Store submission
 - ⏳ Privacy policy — jednoduchá stránka (GitHub Pages), vyžadováno pro Apple Sign In
@@ -750,6 +752,68 @@ Po otevření nové session:
 1. **EAS Build doběhl?** — zkontrolovat `eas build:list`, pokud ready → `eas submit --platform ios --latest` → TestFlight
 2. **Test na 2 iPhonech** — offline flow, P2P sync, invite deep link, notifications, image cache, session persistence
 3. **App Store prep** — privacy policy, screenshots, metadata, submit
+
+### Session 2026-04-18 — post-TestFlight bug-fix pass
+
+TestFlight build 16 uploaded, první reálný multi-device test odhalil hromadu edge-case bugů napříč auth / sync / P2P / UI. Všechny vyřešené, jde se pro build 17.
+
+**Invite accept flow — 3 vrstvy bugů:**
+- **RLS chicken-and-egg** — `invitations_select` policy vyžaduje `is_member(warehouse_id)`, ale pozvaný ještě členem není → první SELECT v `acceptInvitation` vracel null → klient hodil "Invitation not found" → pozvánka se nikdy neaplikovala. Fix: přidán **SECURITY DEFINER RPC `public.accept_invitation(invite_token uuid)`** v `schema.sql` který obchází RLS a atomicky validuje token + vloží membership + označí pozvánku za použitou. Klient volá RPC místo direct table queries.
+- **Deep link parsing** — `stockr://invite/TOKEN` parsuje v expo-linking jako `hostname="invite", path="TOKEN"`. Regex `^invite/(.+)$` nikdy nematchoval → handler nic nedělal → žádný feedback ani error. Fix: zohlednit obě shapes (`hostname=invite` i `path=invite/…`).
+- **SQLite persistence** — po úspěšném server insertu klient nic nezapsal do lokální DB, takže po return na `/` seznam warehouses (čtený z SQLite přes `getMyWarehousesLocal`) byl pořád prázdný. Fix: `acceptInvitation` teď po RPC zapisuje warehouse + membership + boxes + items + ostatní členy + jejich user profily do SQLite.
+
+**Sync engine:**
+- **Pending counter nemizel** — `pushSync` běžel jen při app startu / reconnect. Auto-trigger po mutacích chyběl → queue entry zůstávala po každém writu navždy. Fix: **debounced `scheduleAutoPush` v `enqueueChange`** (500ms) — každý write automaticky naplánuje push, batch writes se coalesce do jednoho cyklu. Plus error surface (tap na lištu "1 pending change" otevře alert s posledním push errorem).
+- **`custom_products` duplicate key crash** — pushSync dělal `upsert` s default `onConflict=PK(id)`, ale produkty mají unique key `(warehouse_id, barcode)`. Když oba kliente naskenovali stejný barcode, dostali různé id ale stejný logický row → PG unique violation → záznam navždy v queue. Fix: per-table conflict override, pro `custom_products` předává `onConflict: 'warehouse_id,barcode'`.
+- **Konflikty se ztrácely** — `runSyncCycle` volal push→pull. Push přepsal server Ondřejovým offline editem, pull pak proti serveru neviděl rozdíl = žádný conflict. Fix: **swap na pull→push** + `pushSync` přeskočí entries, pro které je nevyřešený conflict v `_conflicts`. Konflikt se teď korektně uloží a user dostane červenou lištu "1 sync conflict to resolve".
+
+**Members list** — `initialFullSync` stahoval z `warehouse_members` jen self-row (`eq('user_id', userId)`). Settings screen pak viděl jen přihlášeného usera, ne ostatní členy. Fix: fetch všech členů pro user's warehouses + backfill i v `pullSync` (snapshot-replace) a v `acceptInvitation`.
+
+**Sign-out + offline continue — 4 na sebe navázané bugy:**
+- **Sign out nepůsobil** — handler čistil jen supabase session, ale `cachedUser` state (offline fallback) zůstával → auth guard pořád viděl user autentizovaného. Fix: SIGNED_OUT handler v `_layout.tsx` čistí i `cachedUser`.
+- **Involuntary SIGNED_OUT** — offline token refresh fail taky emituje SIGNED_OUT → můj fix navíc uživatele vyhazoval z appky. Fix: `signOut()` nastaví flag `_explicitSignOut=true`, handler čistí `cachedUser` jen když flag consume ne-false.
+- **Offline signOut hang** — `supabase.auth.signOut()` default scope='global' posílá revoke request serveru. Offline to viselo. Fix: `scope: 'local'`.
+- **Continue offline nepropadlo** — `handleContinueOffline` zapsal `CACHED_USER_KEY` do AsyncStorage, ale `_layout.tsx`'s React state `cachedUser` se o tom nedozvěděl → auth guard viděl null → redirect zpět. Fix: `src/lib/authBridge.ts` — tiny pub-sub, login emituje, _layout poslouchá. Plus `router.replace('/')` odebrán — auth guard naviguje sám když state updatne (odstraněn race mezi `setCachedUser` a `router.replace`).
+
+**Screens používající session — 14 míst:**
+Všechny screeny volaly `supabase.auth.getSession()` pro userId. V offline módu (Continue offline) session je null → fallback na cachedUser chyběl → screens viděly prázdno / "Warehouse not found". Přidány helpery `getActiveUserId()` / `getActiveUser()` (session first, AsyncStorage fallback), aplikovány napříč: warehouses list, profile, `(app)/_layout.tsx`, warehouse settings, box detail, add-items, inventory, products, new warehouse, P2P sync, ItemEditSheet, openOneItem.
+
+Plus: `pullSync` má teď **session guard** — pokud není auth session, vrátí no-op. Bez toho RLS silently filtroval `.select()` na `[]` a můj "replace members snapshot" kód mazal všechny členství lokálně.
+
+**Profile identity** — čte email/display_name z lokální `users` SQLite tabulky (offline případ) + online refresh. Přidán "Contact email" override (pencil icon, tap → Alert.prompt) pro uživatele s Apple "Hide My Email" relay adresou.
+
+**Notifikace redesign:**
+- Windows **30/7/1/0 → 60/30/1** (user-requested)
+- **Grouped per (window, crossing day)** místo per-item-per-window — max 3 notifikace denně, body = seznam jmen
+- Nová obrazovka **`app/(app)/alerts/[window].tsx`** — tap na notifikaci otevře filtrovaný seznam cross-warehouse, sort podle urgency, row s pill "Xd" / "today" / "Xd overdue"
+
+**Filter UX redesign (Items tab, Box detail, Boxes tab):**
+- 3 horizontální scroll-chip řady → **bottom sheet modal** (`src/components/FilterSheet.tsx`) + **ActiveFilterChips** nad seznamem (tap × clear) + badge + primary tint na filter ikoně
+- `ListHeaderAction` rozšířen o `badge` a `active` props
+- **Status** sekce: day-window buckety `Any / Expired / ≤1d / ≤30d / ≤60d / OK (60+) / No date` — **perfektní shoda s notifikačními okny**, nový helper `matchesExpiryFilter`. `ExpiryStatus` enum netknutý (barvy/sort). Přidán helper `matchesCategoryFilter` / `matchesConditionFilter` ve stejném souboru.
+- **Condition** sekce (dřív "Packs") — multi-select **Opened / Damaged / Has note** s OR sémantikou (item prošel pokud splňuje aspoň jeden flag — typické "attention" flagy). Stará `OpenedFilter` odstraněna.
+- **Category** sekce — multi-select checkboxes (dřív single radio). Active chip buď jméno (1 selected) nebo "N categories".
+- `FilterSheet` má `sections` prop (`'status' | 'condition' | 'category'`) — Boxes tab používá jen `['status']`.
+
+**P2P sync crash (nejtěžší případ):**
+- Uživatel: "tap na Start searching → instant crash". TestFlight build 16 crashlog: `EXC_CRASH(SIGABRT)` → `objc_exception_rethrow` v `ObjCTurboModule::performVoidMethodInvocation`. Tedy NSException z native turbo-module invocation.
+- Pravá příčina: **`ios/Stockr/Info.plist` měl jen `<string>_expo._tcp</string>` v `NSBonjourServices`** — náš `_stockr-sync._tcp/_udp` chyběl. `expo-dev-launcher` config plugin při prebuildu přepsal hodnotu z `app.json`. Když `MCNearbyServiceBrowser(serviceType: "stockr-sync")` startoval, iOS 14+ kontroluje deklaraci v Info.plist → **`NSInvalidArgumentException` (uncatchable ve Swiftu)** → abort.
+- Fix: přidán `_stockr-sync._tcp` + `_stockr-sync._udp` do Info.plist přímo + sjednoceny `NSLocalNetworkUsageDescription` a `NSBluetooth*UsageDescription` (byly stále z dev-launcher defaults). `app.json` ses tím sladil (přidán `_expo._tcp` do `NSBonjourServices`) pro budoucí prebuild resilience.
+- Defensive additions (nezpůsobily crash, ale předejdou budoucím edge cases): Swift `startSession` teď validuje `displayName` (non-empty, ≤63 bytes UTF-8) — při nevalidním vstupu throw JS error místo `MCPeerID` NSException crashe. JS truncate display name na 30 chars.
+
+**Klíčová rozhodnutí této session:**
+- **Buckety napříč appkou sjednocené** na day-window model (60/30/1). Notifikace, alerts screen, filter status — všechny mluví stejným jazykem. `ExpiryStatus` enum zůstává separátní pro vizuální barvy (různé thresholdy dávají smysl pro UX v kartách).
+- **Filter UX jednotný přes 3 screeny** — Items / Box detail / Boxes tab používají stejný `FilterSheet` komponentu jen s jinou sadou sekcí. Konzistence > minimalismus.
+- **authBridge event pattern** místo globálního store — malá pub-sub pro kros-screen state updates v edge case Continue offline → auth guard. Jednodušší než Zustand pro jedno-use-case.
+- **RPC pro chicken-and-egg RLS** — stejný pattern jako `create_warehouse_for_me`. Jediná cesta jak nemember může číst/psát invitations tabulku bez otevírání RLS dokořán.
+- **Info.plist direct edit > config plugin** — dev-launcher plugin overwrite nás vždy přepere. Edit committed Info.plist je source of truth, `app.json` NSBonjourServices sladěn pro defensive prebuild resilience.
+
+**Pending (čeká na build 17):**
+- Native rebuild (`eas build --profile preview --platform ios`) — Info.plist fix a Swift displayName validace jsou native changes, OTA update je nedoručí.
+- Test na dvou zařízeních: invite accept flow, offline sign-out+continue, P2P sync after build 17.
+- Volitelně: přidat ObjC try/catch wrapper kolem MCP setupu pro chyt ostatních NSException scenarios (permission denied runtime error atd).
+
+---
 
 ### Session 2026-04-15 + 2026-04-16 — Sprint 3 UZAVŘEN + features
 

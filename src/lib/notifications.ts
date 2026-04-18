@@ -14,8 +14,6 @@
 // ============================================================================
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Item } from '@/src/types/database';
-import { daysUntil } from '@/src/types/database';
 
 const SETTINGS_KEY = 'stockr:notificationsEnabled';
 const WINDOWS_KEY = 'stockr:notificationWindows';
@@ -23,11 +21,12 @@ const MAX_SCHEDULED = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Available reminder windows (days before expiry).
-export const ALL_WINDOWS = [30, 7, 1, 0] as const;
+// 60 = heads-up, 30 = getting close, 1 = act now.
+export const ALL_WINDOWS = [60, 30, 1] as const;
 export type ReminderWindow = (typeof ALL_WINDOWS)[number];
 
 // Default: all windows enabled.
-const DEFAULT_WINDOWS: ReminderWindow[] = [30, 7, 1, 0];
+const DEFAULT_WINDOWS: ReminderWindow[] = [60, 30, 1];
 
 /**
  * Check if the user has enabled expiry notifications.
@@ -46,13 +45,19 @@ export async function setNotificationsEnabled(enabled: boolean): Promise<void> {
 }
 
 /**
- * Get which reminder windows are enabled.
+ * Get which reminder windows are enabled. Filters out values that aren't
+ * in the current ALL_WINDOWS set — e.g. a user who previously had {30, 7}
+ * saved won't schedule 7-day reminders any more.
  */
 export async function getReminderWindows(): Promise<ReminderWindow[]> {
   const raw = await AsyncStorage.getItem(WINDOWS_KEY);
   if (!raw) return DEFAULT_WINDOWS;
   try {
-    return JSON.parse(raw) as ReminderWindow[];
+    const saved = JSON.parse(raw) as number[];
+    const valid = saved.filter(
+      (w): w is ReminderWindow => (ALL_WINDOWS as readonly number[]).includes(w),
+    );
+    return valid.length > 0 ? valid : DEFAULT_WINDOWS;
   } catch {
     return DEFAULT_WINDOWS;
   }
@@ -123,11 +128,18 @@ export async function rescheduleExpiryNotifications(
   // Load user-configured reminder windows
   const activeWindows = await getReminderWindows();
 
-  // Collect all notification candidates.
-  const candidates: { item: ItemWithBox; daysBeforeExpiry: number; triggerDate: Date }[] = [];
-
   const now = Date.now();
   let expiringCount = 0; // for app badge
+
+  // --- Group items by (window, crossing day).
+  // For each window W, an item's "crossing moment" is expiry - W days. On
+  // that day the item newly enters the ≤W bucket. We fire ONE notification
+  // per window per day containing the list of items crossing that day,
+  // so the user gets at most three grouped alerts (60/30/1) for each
+  // distinct crossing date rather than one-per-item per-window.
+  interface GroupKey { window: number; dateKey: string }
+  interface Group { window: number; triggerDate: Date; items: ItemWithBox[] }
+  const groups = new Map<string, Group>();
 
   for (const item of items) {
     if (!item.expiry_date) continue;
@@ -135,78 +147,66 @@ export async function rescheduleExpiryNotifications(
     const [y, m, d] = item.expiry_date.split('-').map(Number);
     const expiryMs = new Date(y, m - 1, d).getTime();
 
-    // Count items expiring within 30 days for badge
+    // Count items expiring within 60 days for badge (widest window).
     const daysLeft = Math.ceil((expiryMs - now) / DAY_MS);
-    if (daysLeft <= 30) expiringCount++;
+    if (daysLeft <= 60) expiringCount++;
 
-    for (const daysBefore of activeWindows) {
-      const triggerMs = expiryMs - daysBefore * DAY_MS;
-      // Only schedule future triggers (at least 1 minute from now).
-      if (triggerMs > now + 60_000) {
-        candidates.push({
-          item,
-          daysBeforeExpiry: daysBefore,
-          triggerDate: new Date(triggerMs),
+    for (const windowDays of activeWindows) {
+      const crossMs = expiryMs - windowDays * DAY_MS;
+      // Fire at 08:00 local on the crossing day.
+      const cross = new Date(crossMs);
+      cross.setHours(8, 0, 0, 0);
+      if (cross.getTime() < now + 60_000) continue; // in the past / too close
+
+      const dateKey = `${cross.getFullYear()}-${cross.getMonth()}-${cross.getDate()}`;
+      const gKey = `${windowDays}|${dateKey}`;
+      const existing = groups.get(gKey);
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        groups.set(gKey, {
+          window: windowDays,
+          triggerDate: cross,
+          items: [item],
         });
       }
     }
-
-    // Also schedule for already-expired items: one "expired" notification
-    // for tomorrow morning (8:00) if the item is expired and we haven't
-    // alerted yet. This catches items that expired while app was closed.
-    const days = daysUntil(item.expiry_date);
-    if (days < 0 && days >= -3) {
-      // Expired in last 3 days — remind once
-      const tomorrow8am = new Date();
-      tomorrow8am.setDate(tomorrow8am.getDate() + 1);
-      tomorrow8am.setHours(8, 0, 0, 0);
-      candidates.push({
-        item,
-        daysBeforeExpiry: -1, // sentinel for "already expired"
-        triggerDate: tomorrow8am,
-      });
-    }
   }
 
-  // Sort by trigger date (earliest first) and cap at MAX_SCHEDULED.
-  candidates.sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime());
-  const toSchedule = candidates.slice(0, MAX_SCHEDULED);
+  // Sort groups by trigger date (earliest first) and cap at MAX_SCHEDULED.
+  const ordered = Array.from(groups.values()).sort(
+    (a, b) => a.triggerDate.getTime() - b.triggerDate.getTime(),
+  );
+  const toSchedule = ordered.slice(0, MAX_SCHEDULED);
 
-  // Schedule each notification.
-  for (const { item, daysBeforeExpiry, triggerDate } of toSchedule) {
-    const boxHint = item.box_name ? ` in ${item.box_name}` : '';
+  for (const g of toSchedule) {
+    const count = g.items.length;
+    const s = count === 1 ? '' : 's';
     let title: string;
-    let body: string;
-
-    if (daysBeforeExpiry === -1) {
-      title = 'Item expired';
-      body = `${item.name}${boxHint} has expired. Check and replace.`;
-    } else if (daysBeforeExpiry === 0) {
-      title = 'Expiring today';
-      body = `${item.name}${boxHint} expires today.`;
-    } else if (daysBeforeExpiry === 1) {
-      title = 'Expiring tomorrow';
-      body = `${item.name}${boxHint} expires tomorrow.`;
-    } else if (daysBeforeExpiry === 7) {
-      title = 'Expiring in 1 week';
-      body = `${item.name}${boxHint} expires in 7 days.`;
+    if (g.window === 1) {
+      title = `${count} item${s} expiring within a day`;
     } else {
-      title = 'Expiring soon';
-      body = `${item.name}${boxHint} expires in ${daysBeforeExpiry} days.`;
+      title = `${count} item${s} with ≤${g.window} days`;
     }
+    // Body: list up to 5 item names, then "+N more" if overflow.
+    const names = g.items.map((i) => i.name);
+    const shown = names.slice(0, 5).join(', ');
+    const overflow = names.length > 5 ? ` +${names.length - 5} more` : '';
+    const body = shown + overflow;
 
     await Notifications.scheduleNotificationAsync({
       content: {
         title,
         body,
-        data: { itemId: item.id, boxId: item.box_id, warehouseId: item.warehouse_id },
+        // Tap navigates to the alerts screen pre-filtered for this window.
+        data: { window: g.window },
         sound: true,
       },
-      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: g.triggerDate },
     });
   }
 
-  // Set app badge to count of items expiring within 30 days.
+  // Set app badge to count of items expiring within 60 days (widest window).
   // 0 clears the badge.
   await Notifications.setBadgeCountAsync(expiringCount);
 }

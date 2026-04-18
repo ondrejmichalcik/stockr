@@ -11,12 +11,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, Alert, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import type { Session } from '@supabase/supabase-js';
-import { acceptInvitation, listAllItemsInWarehouse, getMyWarehouses, supabase } from '@/src/lib/supabase';
+import { acceptInvitation, consumeExplicitSignOut, listAllItemsInWarehouse, getMyWarehouses, supabase } from '@/src/lib/supabase';
 import * as Notifications from 'expo-notifications';
 import { rescheduleExpiryNotifications, setupForegroundHandler } from '@/src/lib/notifications';
 import { initLocalDb } from '@/src/lib/localDb';
 import { hasInitialSync, initialFullSync, runSyncCycle, getPendingSyncCount } from '@/src/lib/sync';
 import { initImageCache, cleanupOrphanedCache } from '@/src/lib/imageCache';
+import { onCachedUserChanged } from '@/src/lib/authBridge';
 import { colors } from '@/src/theme';
 
 // Show notifications even when app is in foreground.
@@ -98,7 +99,7 @@ export default function RootLayout() {
       setLoading(false);
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, s) => {
       setSession(s);
       if (s) {
         // Persist identity on every auth state change
@@ -106,6 +107,15 @@ export default function RootLayout() {
         setCachedUser(user);
         AsyncStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
         AsyncStorage.setItem(LAST_USER_KEY, JSON.stringify(user));
+      } else if (event === 'SIGNED_OUT' && consumeExplicitSignOut()) {
+        // Explicit sign out — drop the cached identity so the auth guard
+        // redirects to the login screen. We leave LAST_USER_KEY intact so
+        // next login can still resume local data for the same user.
+        // Involuntary SIGNED_OUT (e.g. offline token refresh failure)
+        // must NOT clear the cached identity, otherwise the app kicks
+        // the user to login mid-session.
+        setCachedUser(null);
+        AsyncStorage.removeItem(CACHED_USER_KEY);
       }
       // If we just gained a session and a pending invite is stashed, redeem it.
       if (s && !processingPendingRef.current) {
@@ -118,8 +128,20 @@ export default function RootLayout() {
       }
     });
 
+    // Listen for "Continue offline" from the login screen — it sets
+    // CACHED_USER_KEY in AsyncStorage, but our React state needs to pick
+    // that up so the auth guard lets the user through.
+    const unsubBridge = onCachedUserChanged((uid) => {
+      if (uid) {
+        setCachedUser({ id: uid, email: null });
+      } else {
+        setCachedUser(null);
+      }
+    });
+
     return () => {
       sub.subscription.unsubscribe();
+      unsubBridge();
     };
   }, [processInvite]);
 
@@ -210,13 +232,20 @@ export default function RootLayout() {
     return () => sub.remove();
   }, [processInvite]);
 
-  // --- Notification tap → navigate to box detail ---
+  // --- Notification tap → navigate to the matching pre-filtered list ---
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as {
         boxId?: string;
         warehouseId?: string;
+        window?: number;
       } | undefined;
+      // New-style grouped expiry notifications carry `window` → open
+      // the alerts list pre-filtered for items with ≤window days left.
+      if (typeof data?.window === 'number') {
+        router.push(`/alerts/${data.window}` as any);
+        return;
+      }
       if (data?.warehouseId && data?.boxId) {
         router.push(`/warehouse/${data.warehouseId}/box/${data.boxId}` as any);
       }

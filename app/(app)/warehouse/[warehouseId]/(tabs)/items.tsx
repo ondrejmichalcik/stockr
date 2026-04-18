@@ -12,7 +12,6 @@ import {
   Modal,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -23,9 +22,8 @@ import { useFocusEffect, useGlobalSearchParams, useRouter } from 'expo-router';
 import { Swipeable } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
 import { listAllItemsInWarehouse, openOneItem } from '@/src/lib/supabase';
-import type { Category, ExpiryStatus, ItemWithBox } from '@/src/types/database';
+import type { ItemWithBox } from '@/src/types/database';
 import {
-  CATEGORIES,
   EXPIRY_COLORS,
   compareItemsByPriority,
   formatExpiry,
@@ -38,6 +36,16 @@ import { Icon } from '@/src/components/Icon';
 import { ListHeader } from '@/src/components/ListHeader';
 import { StatusDot } from '@/src/components/StatusDot';
 import { ItemEditSheet } from '@/src/components/ItemEditSheet';
+import {
+  ActiveFilterChips,
+  FilterSheet,
+  matchesCategoryFilter,
+  matchesConditionFilter,
+  matchesExpiryFilter,
+  type CategoryFilter,
+  type ConditionFilter,
+  type StatusFilter,
+} from '@/src/components/FilterSheet';
 
 const TAB_BAR_HEIGHT = 84;
 
@@ -56,9 +64,10 @@ export default function ItemsScreen() {
   // Search + Filter
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<ExpiryStatus | 'all'>('all');
-  const [openedFilter, setOpenedFilter] = useState<'all' | 'opened' | 'sealed'>('all');
-  const [categoryFilter, setCategoryFilter] = useState<Category | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>([]);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>([]);
+  const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const searchRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
@@ -111,24 +120,29 @@ export default function ItemsScreen() {
       );
     }
     if (statusFilter !== 'all') {
-      result = result.filter((i) => getExpiryStatus(i.expiry_date) === statusFilter);
+      result = result.filter((i) => matchesExpiryFilter(i.expiry_date, statusFilter));
     }
-    if (openedFilter === 'opened') {
-      result = result.filter((i) => i.opened);
-    } else if (openedFilter === 'sealed') {
-      result = result.filter((i) => !i.opened);
+    if (conditionFilter.length > 0) {
+      result = result.filter((i) => matchesConditionFilter(i, conditionFilter));
     }
-    if (categoryFilter !== 'all') {
-      result = result.filter((i) => i.category === categoryFilter);
+    if (categoryFilter.length > 0) {
+      result = result.filter((i) => matchesCategoryFilter(i.category, categoryFilter));
     }
     return result;
-  }, [sortedItems, searchQuery, statusFilter, openedFilter, categoryFilter]);
+  }, [sortedItems, searchQuery, statusFilter, conditionFilter, categoryFilter]);
 
   const hasActiveFilters =
     searchQuery.trim().length > 0 ||
     statusFilter !== 'all' ||
-    openedFilter !== 'all' ||
-    categoryFilter !== 'all';
+    conditionFilter.length > 0 ||
+    categoryFilter.length > 0;
+
+  // Count of non-search filters — displayed as a badge on the Filter button
+  // so the user can tell at a glance that something is narrowing the list.
+  const activeFilterCount =
+    (statusFilter !== 'all' ? 1 : 0) +
+    (conditionFilter.length > 0 ? 1 : 0) +
+    (categoryFilter.length > 0 ? 1 : 0);
 
   const toggleSearch = () => {
     if (searchVisible) {
@@ -139,8 +153,6 @@ export default function ItemsScreen() {
       setTimeout(() => searchRef.current?.focus(), 100);
     }
   };
-
-  const showFilters = searchVisible || hasActiveFilters;
 
   const confirmOpen = (item: ItemWithBox, close: () => void) => {
     Alert.alert(
@@ -213,15 +225,10 @@ export default function ItemsScreen() {
           },
           {
             sfIcon: 'line.3.horizontal.decrease',
-            onPress: () => {
-              // Toggle filter visibility: show filter chips when tapped
-              if (showFilters && !hasActiveFilters) {
-                setSearchVisible(false);
-              } else {
-                setSearchVisible(true);
-              }
-            },
+            onPress: () => setFilterSheetVisible(true),
             label: 'Filter',
+            badge: activeFilterCount || undefined,
+            active: activeFilterCount > 0,
           },
         ]}
       />
@@ -248,59 +255,15 @@ export default function ItemsScreen() {
         </View>
       )}
 
-      {/* Filter chips */}
-      {showFilters && (
-        <View style={styles.filterSection}>
-          {/* Expiry status */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-            {(['all', 'expired', 'critical', 'soon', 'ok', 'none'] as const).map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setStatusFilter((p) => (p === s ? 'all' : s))}
-                style={[styles.filterChip, statusFilter === s && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, statusFilter === s && styles.filterChipTextActive]}>
-                  {s === 'all' ? 'All status' : s.charAt(0).toUpperCase() + s.slice(1)}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-          {/* Opened / Sealed */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-            {(['all', 'opened', 'sealed'] as const).map((s) => (
-              <Pressable
-                key={s}
-                onPress={() => setOpenedFilter((p) => (p === s ? 'all' : s))}
-                style={[styles.filterChip, openedFilter === s && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, openedFilter === s && styles.filterChipTextActive]}>
-                  {s === 'all' ? 'All packs' : s.charAt(0).toUpperCase() + s.slice(1)}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-          {/* Category */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-            <Pressable
-              onPress={() => setCategoryFilter('all')}
-              style={[styles.filterChip, categoryFilter === 'all' && styles.filterChipActive]}
-            >
-              <Text style={[styles.filterChipText, categoryFilter === 'all' && styles.filterChipTextActive]}>All categories</Text>
-            </Pressable>
-            {CATEGORIES.map((c) => (
-              <Pressable
-                key={c}
-                onPress={() => setCategoryFilter((p) => (p === c ? 'all' : c))}
-                style={[styles.filterChip, categoryFilter === c && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, categoryFilter === c && styles.filterChipTextActive]}>
-                  {c.charAt(0).toUpperCase() + c.slice(1)}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+      {/* Active filter chips — tap × to remove one without opening the sheet. */}
+      <ActiveFilterChips
+        status={statusFilter}
+        condition={conditionFilter}
+        category={categoryFilter}
+        onClearStatus={() => setStatusFilter('all')}
+        onClearCondition={() => setConditionFilter([])}
+        onClearCategory={() => setCategoryFilter([])}
+      />
 
       <FlatList
         data={filteredItems}
@@ -374,6 +337,18 @@ export default function ItemsScreen() {
           />
         )}
       </Modal>
+
+      <FilterSheet
+        visible={filterSheetVisible}
+        initial={{ status: statusFilter, condition: conditionFilter, category: categoryFilter }}
+        onClose={() => setFilterSheetVisible(false)}
+        onApply={({ status, condition, category }) => {
+          setStatusFilter(status);
+          setConditionFilter(condition);
+          setCategoryFilter(category);
+          setFilterSheetVisible(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -501,35 +476,6 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.text,
     paddingVertical: 0,
-  },
-  filterSection: {
-    gap: spacing.xs + 2,
-    marginBottom: spacing.sm,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: spacing.xs + 2,
-    paddingHorizontal: spacing.lg,
-  },
-  filterChip: {
-    paddingHorizontal: spacing.sm + 4,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radius.full,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterChipText: {
-    ...typography.caption,
-    color: colors.text,
-    fontWeight: '600',
-  },
-  filterChipTextActive: {
-    color: colors.textOnPrimary,
   },
   center: {
     flex: 1,

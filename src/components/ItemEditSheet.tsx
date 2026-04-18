@@ -25,6 +25,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { getCachedUri } from '@/src/lib/imageCache';
 import {
   deleteItem,
+  getActiveUserId,
   markItemCondition,
   moveItemQuantity,
   openOneItem,
@@ -139,8 +140,7 @@ export function ItemEditSheet({
   const handleConfirmCondition = async () => {
     try {
       setSaving(true);
-      const { data: sess } = await supabase.auth.getSession();
-      const userId = sess.session?.user.id ?? '';
+      const userId = (await getActiveUserId()) ?? '';
       await markItemCondition(
         item.id,
         { opened: condOpened, damaged: condDamaged, notes: condNotes.trim() || null },

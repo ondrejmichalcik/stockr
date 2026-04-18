@@ -4,7 +4,7 @@
 import { useCallback } from 'react';
 import { View } from 'react-native';
 import { Stack } from 'expo-router';
-import { supabase } from '@/src/lib/supabase';
+import { getActiveUserId } from '@/src/lib/supabase';
 import { runSyncCycle } from '@/src/lib/sync';
 import { SyncStatusBar } from '@/src/components/SyncStatusBar';
 import { colors } from '@/src/theme';
@@ -12,8 +12,7 @@ import { colors } from '@/src/theme';
 export default function AppLayout() {
   // When the device comes back online, trigger a sync cycle.
   const handleReconnect = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const uid = data.session?.user.id;
+    const uid = await getActiveUserId();
     if (uid) runSyncCycle(uid).catch(() => {});
   }, []);
 

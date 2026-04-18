@@ -23,6 +23,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useRouter } from 'expo-router';
 import { signInWithApple, supabase } from '@/src/lib/supabase';
 import { hasInitialSync } from '@/src/lib/sync';
+import { emitCachedUserChanged } from '@/src/lib/authBridge';
 import { colors, radius, spacing, typography } from '@/src/theme';
 import { Icon } from '@/src/components/Icon';
 
@@ -61,7 +62,13 @@ export default function LoginScreen() {
       CACHED_USER_KEY,
       JSON.stringify({ id: offlineUserId, email: null }),
     );
-    router.replace('/' as any);
+    // Notify the root layout so its `cachedUser` React state updates.
+    // DON'T call router.replace here — the auth guard in _layout.tsx
+    // navigates to '/' automatically once cachedUser state commits.
+    // Calling router.replace first creates a race: segments change
+    // before cachedUser state commits, so the guard sees us outside
+    // the auth group with still-null cachedUser → redirect back.
+    emitCachedUserChanged(offlineUserId);
   };
 
   const handleAppleSignIn = async () => {

@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { listBoxes, subscribeBoxes } from '@/src/lib/supabase';
-import type { Box, ExpiryStatus } from '@/src/types/database';
+import type { Box } from '@/src/types/database';
 import {
   compareBoxesByExpiry,
   formatExpiry,
@@ -28,6 +28,12 @@ import { FAB } from '@/src/components/FAB';
 import { Icon } from '@/src/components/Icon';
 import { ListHeader } from '@/src/components/ListHeader';
 import { StatusDot } from '@/src/components/StatusDot';
+import {
+  ActiveFilterChips,
+  FilterSheet,
+  matchesExpiryFilter,
+  type StatusFilter,
+} from '@/src/components/FilterSheet';
 
 // Height of the bottom tab bar (iOS native) + safe space for the FAB.
 const TAB_BAR_HEIGHT = 84;
@@ -43,7 +49,8 @@ export default function BoxesScreen() {
   // Search + Filter
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<ExpiryStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const searchRef = useRef<TextInput>(null);
 
   const load = useCallback(async () => {
@@ -102,9 +109,9 @@ export default function BoxesScreen() {
           (b.location && b.location.toLowerCase().includes(q)),
       );
     }
-    // Status filter
+    // Status filter — boxes use nearest_expiry (min over their items).
     if (statusFilter !== 'all') {
-      result = result.filter((b) => getExpiryStatus(b.nearest_expiry) === statusFilter);
+      result = result.filter((b) => matchesExpiryFilter(b.nearest_expiry, statusFilter));
     }
     return result;
   }, [sortedBoxes, searchQuery, statusFilter]);
@@ -128,9 +135,7 @@ export default function BoxesScreen() {
     }
   };
 
-  const toggleFilter = (status: ExpiryStatus | 'all') => {
-    setStatusFilter((prev) => (prev === status ? 'all' : status));
-  };
+  const activeFilterCount = statusFilter !== 'all' ? 1 : 0;
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -191,8 +196,10 @@ export default function BoxesScreen() {
           },
           {
             sfIcon: 'line.3.horizontal.decrease',
-            onPress: () => setStatusFilter((f) => (f === 'all' ? 'expired' : 'all')),
+            onPress: () => setFilterSheetVisible(true),
             label: 'Filter',
+            badge: activeFilterCount || undefined,
+            active: activeFilterCount > 0,
           },
         ]}
       />
@@ -219,25 +226,15 @@ export default function BoxesScreen() {
         </View>
       )}
 
-      {/* Filter chips */}
-      {statusFilter !== 'all' || searchVisible ? (
-        <View style={styles.filterRow}>
-          {(['all', 'expired', 'critical', 'soon', 'ok', 'none'] as const).map((s) => {
-            const active = statusFilter === s;
-            return (
-              <Pressable
-                key={s}
-                onPress={() => toggleFilter(s)}
-                style={[styles.filterChip, active && styles.filterChipActive]}
-              >
-                <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                  {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+      {/* Active filter chips — tap × to clear without opening the sheet. */}
+      <ActiveFilterChips
+        status={statusFilter}
+        condition={[]}
+        category={[]}
+        onClearStatus={() => setStatusFilter('all')}
+        onClearCondition={() => {}}
+        onClearCategory={() => {}}
+      />
 
       {criticalCount > 0 && statusFilter === 'all' && !searchVisible && (
         <View style={styles.alertBanner}>
@@ -285,6 +282,17 @@ export default function BoxesScreen() {
         sfIcon="plus"
         bottom={TAB_BAR_HEIGHT + 12}
         onPress={() => router.push(`/warehouse/${warehouseId}/box/new` as any)}
+      />
+
+      <FilterSheet
+        visible={filterSheetVisible}
+        initial={{ status: statusFilter, condition: [], category: [] }}
+        sections={['status']}
+        onClose={() => setFilterSheetVisible(false)}
+        onApply={({ status }) => {
+          setStatusFilter(status);
+          setFilterSheetVisible(false);
+        }}
       />
     </SafeAreaView>
   );
@@ -353,32 +361,6 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.text,
     paddingVertical: 0,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: spacing.xs + 2,
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  filterChip: {
-    paddingHorizontal: spacing.sm + 4,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radius.full,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterChipText: {
-    ...typography.caption,
-    color: colors.text,
-    fontWeight: '600',
-  },
-  filterChipTextActive: {
-    color: colors.textOnPrimary,
   },
   center: {
     flex: 1,

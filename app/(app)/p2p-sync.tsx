@@ -15,7 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { supabase } from '@/src/lib/supabase';
+import { getActiveUser, getActiveUserId } from '@/src/lib/supabase';
 import { exportSyncBundle, importSyncBundle } from '@/src/lib/p2pSync';
 import {
   startSession,
@@ -48,19 +48,20 @@ export default function P2PSyncScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const userIdRef = useRef<string | null>(null);
 
-  // Get user ID on mount
+  // Get user ID on mount (works offline via cachedUser fallback)
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      userIdRef.current = data.session?.user.id ?? null;
-    });
+    getActiveUserId().then((uid) => { userIdRef.current = uid; });
   }, []);
 
   // Start discovery
   const handleStart = useCallback(async () => {
     try {
-      const { data } = await supabase.auth.getSession();
-      const displayName = data.session?.user.email ?? 'Stockr User';
-      userIdRef.current = data.session?.user.id ?? null;
+      const user = await getActiveUser();
+      // MCPeerID has a hard 63-byte UTF-8 cap and must be non-empty. Prefer
+      // display_name (shorter, human) over email, and truncate defensively.
+      const rawName = (user?.email && user.email.trim()) || 'Stockr User';
+      const displayName = rawName.length > 30 ? rawName.slice(0, 30) : rawName;
+      userIdRef.current = user?.id ?? null;
 
       await startSession(displayName);
       setPhase('searching');
@@ -69,7 +70,7 @@ export default function P2PSyncScreen() {
       setSyncResult(null);
       setErrorMsg(null);
     } catch (e: any) {
-      setErrorMsg(e?.message ?? 'Failed to start');
+      setErrorMsg(e?.message ?? String(e) ?? 'Failed to start');
       setPhase('error');
     }
   }, []);

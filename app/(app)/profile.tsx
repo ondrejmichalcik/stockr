@@ -18,7 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as Network from 'expo-network';
-import { signOut, supabase } from '@/src/lib/supabase';
+import { getActiveUser, signOut, supabase } from '@/src/lib/supabase';
 import {
   clearAnthropicKey,
   getAnthropicKey,
@@ -46,17 +46,38 @@ export default function ProfileScreen() {
   const [activeWindows, setActiveWindows] = useState<ReminderWindow[]>([...ALL_WINDOWS]);
 
   const loadProfile = useCallback(async () => {
-    const { data: sess } = await supabase.auth.getSession();
-    const user = sess.session?.user;
+    const user = await getActiveUser();
     if (user) {
-      setEmail(user.email ?? null);
-      // Best-effort: read display_name from the public.users row
-      const { data } = await supabase
-        .from('users')
-        .select('display_name')
-        .eq('id', user.id)
-        .maybeSingle();
-      setDisplayName((data as { display_name: string | null } | null)?.display_name ?? null);
+      setEmail(user.email);
+      // Try local SQLite first so offline continue shows the user's
+      // identity; fall back to the server only if we didn't have the
+      // row cached. Email may have been null in cachedUser (offline
+      // continue doesn't stash it), so recover it from the local row.
+      let localEmail: string | null = null;
+      let localName: string | null = null;
+      try {
+        const { getDb } = await import('@/src/lib/localDb');
+        const row = getDb().getFirstSync<{ email: string | null; display_name: string | null }>(
+          'SELECT email, display_name FROM users WHERE id = ?', [user.id],
+        );
+        if (row) {
+          localEmail = row.email;
+          localName = row.display_name;
+        }
+      } catch { /* db not ready */ }
+      if (localEmail) setEmail(localEmail);
+      if (localName) setDisplayName(localName);
+      // Online refresh — overwrites with server value if reachable.
+      try {
+        const { data } = await supabase
+          .from('users')
+          .select('display_name, email')
+          .eq('id', user.id)
+          .maybeSingle();
+        const d = data as { display_name: string | null; email: string | null } | null;
+        if (d?.email) setEmail(d.email);
+        if (d?.display_name) setDisplayName(d.display_name);
+      } catch { /* offline, ignore */ }
     }
     const key = await getAnthropicKey();
     setKeyStatus(key ? 'present' : 'absent');
@@ -75,6 +96,51 @@ export default function ProfileScreen() {
       loadProfile().catch(() => {});
     }, [loadProfile]),
   );
+
+  // ---- Contact email override ----------------------------------------------
+  // Apple Sign In with "Hide My Email" returns an ...@privaterelay.appleid.com
+  // address — the user's real email is never shared with us. This lets the
+  // user manually store a contact email (display-only, doesn't affect auth).
+  // Stored in public.users.email; when offline the update queues via the
+  // standard sync path once connectivity returns.
+  const promptForEmail = () => {
+    Alert.prompt(
+      'Contact email',
+      'Apple "Hide My Email" gave us a relay address. You can enter your real email here for display. Auth keeps using Apple Sign In — this is purely cosmetic.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save',
+          onPress: async (text?: string) => {
+            const trimmed = (text ?? '').trim();
+            if (!trimmed) return;
+            const user = await getActiveUser();
+            if (!user) return;
+            try {
+              // Update local SQLite first so UI reflects immediately.
+              const { getDb } = await import('@/src/lib/localDb');
+              getDb().runSync(
+                'UPDATE users SET email = ? WHERE id = ?',
+                [trimmed, user.id],
+              );
+              setEmail(trimmed);
+              // Push to server — silent failure is OK, user sees local value.
+              supabase
+                .from('users')
+                .update({ email: trimmed })
+                .eq('id', user.id)
+                .then(() => {}, () => {});
+            } catch (e: any) {
+              Alert.alert('Error', e?.message ?? 'Cannot save email.');
+            }
+          },
+        },
+      ],
+      'plain-text',
+      email ?? '',
+      'email-address',
+    );
+  };
 
   // ---- API key management --------------------------------------------------
 
@@ -204,11 +270,14 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         {/* Account card */}
         <Text style={styles.sectionHeader}>ACCOUNT</Text>
-        <View style={styles.card}>
+        <Pressable
+          style={({ pressed }) => [styles.card, styles.accountCardRow, pressed && { opacity: 0.7 }]}
+          onPress={promptForEmail}
+        >
           <View style={styles.avatar}>
             <Icon sf="person.fill" size={24} color={colors.primary} />
           </View>
-          <View style={styles.accountBody}>
+          <View style={[styles.accountBody, { flex: 1 }]}>
             <Text style={styles.accountName} numberOfLines={1}>
               {displayName ?? email ?? 'Signed in'}
             </Text>
@@ -218,7 +287,8 @@ export default function ProfileScreen() {
               </Text>
             ) : null}
           </View>
-        </View>
+          <Icon sf="pencil" size={16} color={colors.textSubtle} />
+        </Pressable>
 
         {/* Claude Vision section */}
         <Text style={styles.sectionHeader}>CLAUDE VISION</Text>
@@ -419,6 +489,11 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.md,
     ...shadows.sm,
+  },
+
+  accountCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 
   // Account row

@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { createWarehouse, supabase } from '@/src/lib/supabase';
+import { createWarehouse, getActiveUserId } from '@/src/lib/supabase';
 import { colors, radius, shadows, spacing, typography } from '@/src/theme';
 import { Icon } from '@/src/components/Icon';
 
@@ -35,8 +35,7 @@ export default function NewWarehouseScreen() {
     }
     try {
       setSaving(true);
-      const { data: sess } = await supabase.auth.getSession();
-      const userId = sess.session?.user.id;
+      const userId = await getActiveUserId();
       if (!userId) throw new Error('Not signed in.');
       const wh = await createWarehouse(userId, trimmed);
       router.replace(`/warehouse/${wh.id}` as any);

@@ -36,6 +36,7 @@ import { StatusDot } from '@/src/components/StatusDot';
 import {
   deleteBox,
   deleteItem,
+  getActiveUserId,
   getBoxById,
   getMyWarehouses,
   listItems,
@@ -62,6 +63,16 @@ import {
 } from '@/src/types/database';
 import { colors, radius, shadows, spacing, typography } from '@/src/theme';
 import type { SFSymbolName } from '@/src/components/Icon';
+import {
+  ActiveFilterChips,
+  FilterSheet,
+  matchesCategoryFilter,
+  matchesConditionFilter,
+  matchesExpiryFilter,
+  type CategoryFilter,
+  type ConditionFilter,
+  type StatusFilter,
+} from '@/src/components/FilterSheet';
 
 type ViewMode = 'list' | 'grid';
 const VIEW_MODE_KEY = 'stockr:boxViewMode';
@@ -104,6 +115,12 @@ export default function BoxDetailScreen() {
   const [inventoryMode, setInventoryMode] = useState(false);
   const [verifiedIds, setVerifiedIds] = useState<Set<string>>(new Set());
 
+  // Filter (mirrors Items tab — status / condition / category)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [conditionFilter, setConditionFilter] = useState<ConditionFilter>([]);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>([]);
+  const [filterSheetVisible, setFilterSheetVisible] = useState(false);
+
   // Load persisted view mode preference (global across all boxes).
   useEffect(() => {
     AsyncStorage.getItem(VIEW_MODE_KEY).then((v) => {
@@ -129,8 +146,7 @@ export default function BoxDetailScreen() {
       setItems(is);
       // Resolve user's role in this warehouse for gating destructive actions
       if (warehouseId) {
-        const { data: sess } = await supabase.auth.getSession();
-        const uid = sess.session?.user.id;
+        const uid = await getActiveUserId();
         if (uid) {
           const whs = await getMyWarehouses(uid);
           const wh = whs.find((w) => w.id === warehouseId);
@@ -377,8 +393,7 @@ export default function BoxDetailScreen() {
   const executeBatchMove = async () => {
     if (!moveTarget) return;
     try {
-      const { data: sess } = await supabase.auth.getSession();
-      const userId = sess.session?.user.id ?? '';
+      const userId = (await getActiveUserId()) ?? '';
 
       for (const id of selectedIds) {
         const item = items.find((i) => i.id === id);
@@ -404,6 +419,25 @@ export default function BoxDetailScreen() {
   };
 
   const sortedItems = useMemo(() => [...items].sort(compareItemsByPriority), [items]);
+
+  const filteredItems = useMemo(() => {
+    let result = sortedItems;
+    if (statusFilter !== 'all') {
+      result = result.filter((i) => matchesExpiryFilter(i.expiry_date, statusFilter));
+    }
+    if (conditionFilter.length > 0) {
+      result = result.filter((i) => matchesConditionFilter(i, conditionFilter));
+    }
+    if (categoryFilter.length > 0) {
+      result = result.filter((i) => matchesCategoryFilter(i.category, categoryFilter));
+    }
+    return result;
+  }, [sortedItems, statusFilter, conditionFilter, categoryFilter]);
+
+  const activeFilterCount =
+    (statusFilter !== 'all' ? 1 : 0) +
+    (conditionFilter.length > 0 ? 1 : 0) +
+    (categoryFilter.length > 0 ? 1 : 0);
 
   const nearest = useMemo(() => box?.nearest_expiry ?? null, [box]);
   const nearestStatus = getExpiryStatus(nearest);
@@ -476,6 +510,23 @@ export default function BoxDetailScreen() {
         </Text>
         <Pressable
           hitSlop={12}
+          onPress={() => setFilterSheetVisible(true)}
+          accessibilityLabel="Filter"
+          style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.5 }]}
+        >
+          <Icon
+            sf="line.3.horizontal.decrease"
+            size={22}
+            color={activeFilterCount > 0 ? colors.primary : colors.text}
+          />
+          {activeFilterCount > 0 ? (
+            <View style={styles.topBarBadge}>
+              <Text style={styles.topBarBadgeText}>{activeFilterCount}</Text>
+            </View>
+          ) : null}
+        </Pressable>
+        <Pressable
+          hitSlop={12}
           onPress={showBoxActionSheet}
           style={({ pressed }) => [styles.topBarBtn, pressed && { opacity: 0.5 }]}
         >
@@ -503,6 +554,16 @@ export default function BoxDetailScreen() {
           </Text>
         </View>
       </View>
+
+      {/* Active filter chips — tap × to clear one without opening the sheet. */}
+      <ActiveFilterChips
+        status={statusFilter}
+        condition={conditionFilter}
+        category={categoryFilter}
+        onClearStatus={() => setStatusFilter('all')}
+        onClearCondition={() => setConditionFilter([])}
+        onClearCategory={() => setCategoryFilter([])}
+      />
 
       {/* View mode segmented control */}
       <View style={styles.segmented}>
@@ -536,7 +597,7 @@ export default function BoxDetailScreen() {
 
       <FlatList
         key={viewMode}
-        data={sortedItems}
+        data={filteredItems}
         keyExtractor={(item) => item.id}
         numColumns={viewMode === 'grid' ? 3 : 1}
         contentContainerStyle={viewMode === 'grid' ? styles.gridContent : styles.listContent}
@@ -849,6 +910,18 @@ export default function BoxDetailScreen() {
           />
         )}
       </Modal>
+
+      <FilterSheet
+        visible={filterSheetVisible}
+        initial={{ status: statusFilter, condition: conditionFilter, category: categoryFilter }}
+        onClose={() => setFilterSheetVisible(false)}
+        onApply={({ status, condition, category }) => {
+          setStatusFilter(status);
+          setConditionFilter(condition);
+          setCategoryFilter(category);
+          setFilterSheetVisible(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -1231,6 +1304,24 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  topBarBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  topBarBadgeText: {
+    color: colors.textOnPrimary,
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
   },
   topBarTitle: {
     ...typography.headline,

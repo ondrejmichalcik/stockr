@@ -18,9 +18,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
+  getActiveUserId,
   getMyWarehouses,
   subscribeMyWarehouses,
-  supabase,
 } from '@/src/lib/supabase';
 import type { WarehouseWithRole } from '@/src/types/database';
 import { colors, radius, spacing, typography } from '@/src/theme';
@@ -36,8 +36,7 @@ export default function WarehousesListScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data: sess } = await supabase.auth.getSession();
-    const uid = sess.session?.user.id ?? null;
+    const uid = await getActiveUserId();
     setUserId(uid);
     if (!uid) return;
     const list = await getMyWarehouses(uid);

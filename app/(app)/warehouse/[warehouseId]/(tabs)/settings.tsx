@@ -28,6 +28,7 @@ import {
   createInvitation,
   deleteWarehouse,
   demoteMember,
+  getActiveUserId,
   getWarehouseById,
   leaveWarehouse,
   listMembers,
@@ -70,8 +71,7 @@ export default function WarehouseSettingsScreen() {
     if (!warehouseId) return;
     try {
       setError(null);
-      const { data: sess } = await supabase.auth.getSession();
-      const uid = sess.session?.user.id ?? null;
+      const uid = await getActiveUserId();
       setCurrentUserId(uid);
       if (!uid) return;
       // Fetch the warehouse directly by id — avoids any getMyWarehouses shape

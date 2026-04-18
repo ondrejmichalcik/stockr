@@ -24,7 +24,7 @@
         "NSBluetoothAlwaysUsageDescription": "Stockr uses Bluetooth to print QR labels and sync with nearby devices.",
         "NSBluetoothPeripheralUsageDescription": "Stockr uses Bluetooth to communicate with the label printer and nearby devices.",
         "NSLocalNetworkUsageDescription": "Stockr uses your local network to sync data with nearby devices.",
-        "NSBonjourServices": ["_stockr-sync._tcp", "_stockr-sync._udp"],
+        "NSBonjourServices": ["_expo._tcp", "_stockr-sync._tcp", "_stockr-sync._udp"],
         "ITSAppUsesNonExemptEncryption": false
       },
       "associatedDomains": []

@@ -88,15 +88,75 @@ export async function signInWithApple(identityToken: string, nonce?: string) {
   });
 }
 
+// Set to true right before calling supabase.auth.signOut() so the
+// `SIGNED_OUT` auth-state handler in _layout.tsx can distinguish an
+// explicit user-initiated sign out from an involuntary one (e.g.
+// Supabase failing to refresh an expired token while the device is
+// offline — it also emits SIGNED_OUT but we must keep the cached
+// identity so the app keeps working locally).
+let _explicitSignOut = false;
+
+export function consumeExplicitSignOut(): boolean {
+  const v = _explicitSignOut;
+  _explicitSignOut = false;
+  return v;
+}
+
 export async function signOut() {
-  // Clear cached user identity so auth guard redirects to login
-  await AsyncStorage.removeItem('stockr:cachedUser');
-  return supabase.auth.signOut();
+  _explicitSignOut = true;
+  // scope: 'local' destroys the session locally without calling the
+  // server-side revoke endpoint, so sign-out works deterministically
+  // when the device is offline. The server session is effectively
+  // invalidated the next time the user logs in anyway.
+  // _layout's SIGNED_OUT handler clears the cached identity when the
+  // flag is set.
+  return supabase.auth.signOut({ scope: 'local' });
 }
 
 export async function getSession() {
   const { data } = await supabase.auth.getSession();
   return data.session;
+}
+
+/**
+ * Returns the effective user id for the current app instance. Prefers
+ * the live Supabase session; falls back to the cached identity written
+ * by the login flow (sign-in or "Continue offline"). Screens that filter
+ * data by user must use this — calling `supabase.auth.getSession()`
+ * directly returns null when the user continued offline, which makes
+ * every list look empty.
+ */
+export async function getActiveUserId(): Promise<string | null> {
+  const { data } = await supabase.auth.getSession();
+  if (data.session?.user.id) return data.session.user.id;
+  try {
+    const raw = await AsyncStorage.getItem('stockr:cachedUser');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { id?: string };
+      if (parsed?.id) return parsed.id;
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
+/**
+ * Returns both the active user id AND the best-known email. Email is null
+ * in offline continue mode (we don't cache it). Use this for Profile-style
+ * identity rendering.
+ */
+export async function getActiveUser(): Promise<{ id: string; email: string | null } | null> {
+  const { data } = await supabase.auth.getSession();
+  if (data.session?.user) {
+    return { id: data.session.user.id, email: data.session.user.email ?? null };
+  }
+  try {
+    const raw = await AsyncStorage.getItem('stockr:cachedUser');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { id?: string; email?: string | null };
+      if (parsed?.id) return { id: parsed.id, email: parsed.email ?? null };
+    }
+  } catch { /* fall through */ }
+  return null;
 }
 
 // ============================================================================
@@ -780,8 +840,7 @@ export async function markItemCondition(
  */
 export async function openOneItem(itemId: string): Promise<Item> {
   if (hasInitialSync()) {
-    const { data: sess } = await supabase.auth.getSession();
-    const userId = sess.session?.user.id ?? '';
+    const userId = (await getActiveUserId()) ?? '';
     return openOneItemLocal(itemId, userId);
     // Background sync will push changes from queue
   }
@@ -918,9 +977,37 @@ export async function acceptInvitation(token: string, userId: string): Promise<W
        VALUES (?, ?, ?, ?, 1)`,
       [w.id, userId, (myMembership as any)?.role ?? 'member', (myMembership as any)?.joined_at ?? now],
     );
-    // Pull boxes/items for the newly joined warehouse so the user can
-    // open it offline right after accepting.
+    // Pull boxes/items/other members for the newly joined warehouse so the
+    // user can open it offline right after accepting AND see everyone who
+    // was already in the warehouse (settings → members list).
     try {
+      const { data: otherMembers } = await supabase
+        .from('warehouse_members')
+        .select('*')
+        .eq('warehouse_id', w.id);
+      for (const m of (otherMembers ?? []) as any[]) {
+        db.runSync(
+          `INSERT OR REPLACE INTO warehouse_members (warehouse_id, user_id, role, joined_at, _synced)
+           VALUES (?, ?, ?, ?, 1)`,
+          [m.warehouse_id, m.user_id, m.role, m.joined_at],
+        );
+      }
+      // Also pull their user profiles so display_name/email render.
+      const memberUserIds = (otherMembers ?? []).map((m: any) => m.user_id);
+      if (memberUserIds.length > 0) {
+        const { data: memberUsers } = await supabase
+          .from('users')
+          .select('*')
+          .in('id', memberUserIds);
+        for (const u of (memberUsers ?? []) as any[]) {
+          db.runSync(
+            `INSERT OR REPLACE INTO users (id, email, display_name, avatar_url, created_at, _synced)
+             VALUES (?, ?, ?, ?, ?, 1)`,
+            [u.id, u.email, u.display_name, u.avatar_url, u.created_at],
+          );
+        }
+      }
+
       const { data: boxes } = await supabase
         .from('boxes')
         .select('*')

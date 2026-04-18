@@ -55,9 +55,12 @@ export async function initialFullSync(userId: string): Promise<void> {
 
   const warehouseIds = memberships.map((m: any) => m.warehouse_id);
 
-  // 2. Fetch all related data in parallel
+  // 2. Fetch all related data in parallel.
+  // allMembers covers every member of our warehouses, not just the caller —
+  // otherwise the settings screen only shows the signed-in user.
   const [
     { data: users },
+    { data: allMembers },
     { data: boxes },
     { data: items },
     { data: customProducts },
@@ -66,6 +69,7 @@ export async function initialFullSync(userId: string): Promise<void> {
     { data: inventoryLines },
   ] = await Promise.all([
     supabase.from('users').select('*'),
+    supabase.from('warehouse_members').select('*').in('warehouse_id', warehouseIds),
     supabase.from('boxes').select('*').in('warehouse_id', warehouseIds),
     supabase
       .from('items')
@@ -108,8 +112,8 @@ export async function initialFullSync(userId: string): Promise<void> {
       );
     }
 
-    // Warehouse members
-    for (const m of memberships as any[]) {
+    // Warehouse members (ALL members of our warehouses, not just self)
+    for (const m of (allMembers ?? []) as any[]) {
       db.runSync(
         `INSERT OR REPLACE INTO warehouse_members (warehouse_id, user_id, role, joined_at, _synced)
          VALUES (?, ?, ?, ?, 1)`,
@@ -394,11 +398,25 @@ export async function pushSync(): Promise<{ pushed: number; failed: number }> {
     changed_fields: string | null;
   }>('SELECT * FROM _sync_queue WHERE pushed_at IS NULL ORDER BY id ASC');
 
+  // Rows with unresolved conflicts must NOT be auto-pushed — the user
+  // has to resolve the conflict first. Otherwise the local value would
+  // silently overwrite the server, destroying the concurrent change
+  // that caused the conflict in the first place.
+  const conflictedKeys = new Set(
+    db.getAllSync<{ table_name: string; row_id: string }>(
+      'SELECT table_name, row_id FROM _conflicts WHERE resolved_at IS NULL',
+    ).map((c) => `${c.table_name}:${c.row_id}`),
+  );
+
   let pushed = 0;
   let failed = 0;
   const now = new Date().toISOString();
 
   for (const entry of pending) {
+    if (conflictedKeys.has(`${entry.table_name}:${entry.row_id}`)) {
+      // Skip — user must resolve the conflict before we push.
+      continue;
+    }
     try {
       if (entry.operation === 'INSERT') {
         const row = db.getFirstSync<any>(
@@ -495,6 +513,62 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
   let pulled = 0;
   let conflicts = 0;
 
+  // Guard: without an active Supabase session, every query hits RLS with
+  // no auth token and silently returns an empty array. If we treated that
+  // as authoritative we'd wipe the user's local memberships / boxes /
+  // items. "Continue offline" is exactly this state — skip pull entirely,
+  // there is nothing meaningful to sync anyway.
+  const { data: sessData } = await supabase.auth.getSession();
+  if (!sessData.session) return { pulled: 0, conflicts: 0 };
+
+  // --- Refresh the user's own memberships first.
+  // A freshly accepted invitation (on this or another device) must show
+  // up here before we can pull data for that warehouse. We also pick up
+  // role changes and removals.
+  try {
+    const { data: myMemberships } = await supabase
+      .from('warehouse_members')
+      .select('*, warehouses(*)')
+      .eq('user_id', userId);
+    if (myMemberships) {
+      // Upsert warehouses referenced by memberships.
+      for (const m of myMemberships as any[]) {
+        const w = m.warehouses;
+        if (w) {
+          db.runSync(
+            `INSERT OR REPLACE INTO warehouses (id, owner_id, name, created_at, _synced, _local_updated_at)
+             VALUES (?, ?, ?, ?, 1, ?)`,
+            [w.id, w.owner_id, w.name, w.created_at, new Date().toISOString()],
+          );
+        }
+      }
+      // Replace the caller's own membership rows with the server snapshot:
+      // delete stale rows (user was kicked), upsert current ones.
+      const activeWarehouseIds = new Set(
+        (myMemberships as any[]).map((m) => m.warehouse_id),
+      );
+      const localMine = db.getAllSync<{ warehouse_id: string }>(
+        'SELECT warehouse_id FROM warehouse_members WHERE user_id = ?',
+        [userId],
+      );
+      for (const row of localMine) {
+        if (!activeWarehouseIds.has(row.warehouse_id)) {
+          db.runSync(
+            'DELETE FROM warehouse_members WHERE warehouse_id = ? AND user_id = ?',
+            [row.warehouse_id, userId],
+          );
+        }
+      }
+      for (const m of myMemberships as any[]) {
+        db.runSync(
+          `INSERT OR REPLACE INTO warehouse_members (warehouse_id, user_id, role, joined_at, _synced)
+           VALUES (?, ?, ?, ?, 1)`,
+          [m.warehouse_id, m.user_id, m.role, m.joined_at],
+        );
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // Get warehouse IDs the user is a member of
   const memberships = db.getAllSync<{ warehouse_id: string }>(
     'SELECT warehouse_id FROM warehouse_members WHERE user_id = ? AND _deleted_at IS NULL',
@@ -504,6 +578,48 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
   if (warehouseIds.length === 0) return { pulled: 0, conflicts: 0 };
 
   const now = new Date().toISOString();
+
+  // --- Pull ALL members of shared warehouses + their user profiles.
+  // Settings → members list reads locally; without this the user only ever
+  // sees themselves in warehouses they share. Member management flows
+  // directly server-side (no local queue), so snapshot-replace is safe.
+  try {
+    const { data: allMembers } = await supabase
+      .from('warehouse_members')
+      .select('*')
+      .in('warehouse_id', warehouseIds);
+    if (allMembers) {
+      // Replace members for these warehouses with the server snapshot.
+      for (const wid of warehouseIds) {
+        db.runSync(
+          'DELETE FROM warehouse_members WHERE warehouse_id = ?',
+          [wid],
+        );
+      }
+      for (const m of allMembers as any[]) {
+        db.runSync(
+          `INSERT OR REPLACE INTO warehouse_members (warehouse_id, user_id, role, joined_at, _synced)
+           VALUES (?, ?, ?, ?, 1)`,
+          [m.warehouse_id, m.user_id, m.role, m.joined_at],
+        );
+      }
+      // Backfill user profiles we don't already have so display_name/email render.
+      const userIds = Array.from(new Set((allMembers as any[]).map((m) => m.user_id)));
+      if (userIds.length > 0) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('*')
+          .in('id', userIds);
+        for (const u of (users ?? []) as any[]) {
+          db.runSync(
+            `INSERT OR REPLACE INTO users (id, email, display_name, avatar_url, created_at, _synced)
+             VALUES (?, ?, ?, ?, ?, 1)`,
+            [u.id, u.email, u.display_name, u.avatar_url, u.created_at],
+          );
+        }
+      }
+    }
+  } catch { /* non-fatal */ }
 
   // Pull boxes
   const lastBoxPull = db.getFirstSync<{ last_pulled_at: string | null }>(
@@ -617,8 +733,11 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
 // ---- Full sync cycle ------------------------------------------------------
 
 /**
- * Run a complete sync cycle: push local changes, then pull remote updates.
- * Returns summary of what happened. Call this periodically when online.
+ * Run a complete sync cycle: pull remote updates first so concurrent
+ * server changes can be compared against local edits (and flagged as
+ * conflicts when they overlap), THEN push local changes so pushSync can
+ * skip anything that's now in conflict. Push-first would silently clobber
+ * the server whenever both sides touched the same field offline.
  */
 export async function runSyncCycle(userId: string): Promise<{
   pushed: number;
@@ -628,8 +747,8 @@ export async function runSyncCycle(userId: string): Promise<{
 }> {
   setSyncStatus('syncing');
   try {
-    const pushResult = await pushSync();
     const pullResult = await pullSync(userId);
+    const pushResult = await pushSync();
     setSyncStatus('idle');
 
     // Prefetch product images in the background after a successful pull

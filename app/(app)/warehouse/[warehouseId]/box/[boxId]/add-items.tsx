@@ -29,6 +29,7 @@ import { getCachedUri } from '@/src/lib/imageCache';
 import {
   addItemsBatch,
   findCustomProduct,
+  getActiveUserId,
   supabase,
   upsertCustomProduct,
 } from '@/src/lib/supabase';
@@ -361,8 +362,7 @@ export default function AddItemsScreen() {
     // prefills without another Claude call.
     if (opts.barcode && warehouseId) {
       try {
-        const { data: sess } = await supabase.auth.getSession();
-        const userId = sess.session?.user.id;
+        const userId = await getActiveUserId();
         if (userId) {
           await upsertCustomProduct({
             warehouse_id: warehouseId,
@@ -502,8 +502,7 @@ export default function AddItemsScreen() {
     // If it has a barcode and isn't already a custom_product, remember it
     if (entry.barcode && warehouseId) {
       try {
-        const { data: sess } = await supabase.auth.getSession();
-        const userId = sess.session?.user.id;
+        const userId = await getActiveUserId();
         if (userId) {
           await upsertCustomProduct({
             warehouse_id: warehouseId,
@@ -544,8 +543,7 @@ export default function AddItemsScreen() {
     if (!boxId || queue.length === 0) return;
     try {
       setSaving(true);
-      const { data: sess } = await supabase.auth.getSession();
-      const userId = sess.session?.user.id;
+      const userId = await getActiveUserId();
       if (!userId) throw new Error('Not signed in.');
       await addItemsBatch(
         boxId,

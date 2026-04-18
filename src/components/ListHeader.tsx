@@ -14,6 +14,10 @@ export interface ListHeaderAction {
   onPress: () => void;
   /** Accessibility hint for VoiceOver. */
   label?: string;
+  /** Small number badge in the top-right of the icon (e.g. active filter count). */
+  badge?: number;
+  /** Tint the icon with the primary color to signal "active". */
+  active?: boolean;
 }
 
 export interface ListHeaderProps {
@@ -49,7 +53,12 @@ export function ListHeader({ title, subtitle, leading, actions }: ListHeaderProp
                 accessibilityLabel={a.label}
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.5 }]}
               >
-                <Icon sf={a.sfIcon} size={22} color={colors.text} />
+                <Icon sf={a.sfIcon} size={22} color={a.active ? colors.primary : colors.text} />
+                {a.badge && a.badge > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{a.badge}</Text>
+                  </View>
+                ) : null}
               </Pressable>
             ))}
           </View>
@@ -99,5 +108,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 20,
+  },
+  badge: {
+    position: 'absolute',
+    top: 4,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: {
+    color: colors.textOnPrimary,
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
   },
 });

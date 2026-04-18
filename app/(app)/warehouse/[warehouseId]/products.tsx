@@ -18,9 +18,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   deleteCustomProduct,
+  getActiveUserId,
   listCustomProducts,
   upsertCustomProduct,
-  supabase,
 } from '@/src/lib/supabase';
 import type { CustomProduct } from '@/src/types/database';
 import { colors, radius, spacing, typography } from '@/src/theme';
@@ -69,7 +69,7 @@ export default function ProductsScreen() {
                   const trimmed = (text ?? '').trim();
                   if (!trimmed) return;
                   try {
-                    const { data: sess } = await supabase.auth.getSession();
+                    const uid = (await getActiveUserId()) ?? '';
                     await upsertCustomProduct({
                       warehouse_id: product.warehouse_id,
                       barcode: product.barcode,
@@ -77,7 +77,7 @@ export default function ProductsScreen() {
                       category: product.category,
                       image_url: product.image_url,
                       typical_expiry_days: product.typical_expiry_days,
-                      created_by: sess.session?.user.id ?? '',
+                      created_by: uid,
                     });
                     await load();
                   } catch (e: any) {
