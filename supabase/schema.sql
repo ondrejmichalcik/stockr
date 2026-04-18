@@ -387,6 +387,52 @@ $$;
 
 grant execute on function public.create_warehouse_for_me(text) to authenticated;
 
+-- accept_invitation
+-- Redeems an invitation token and joins the caller to the warehouse.
+-- Needed because `invitations_select` RLS requires membership, which
+-- creates a chicken-and-egg: the invitee cannot SELECT the invitation
+-- row until they are already a member. SECURITY DEFINER bypasses RLS
+-- and performs validation + membership insert + token consumption
+-- atomically. Idempotent on the membership insert.
+create or replace function public.accept_invitation(invite_token uuid)
+returns public.warehouses
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inv record;
+  wh public.warehouses;
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select * into inv from public.invitations where token = invite_token;
+  if not found then
+    raise exception 'Invitation not found.';
+  end if;
+  if inv.accepted_at is not null then
+    raise exception 'This invitation has already been used.';
+  end if;
+  if inv.expires_at < now() then
+    raise exception 'This invitation has expired.';
+  end if;
+
+  insert into public.warehouse_members (warehouse_id, user_id, role)
+  values (inv.warehouse_id, uid, coalesce(inv.role, 'member'))
+  on conflict (warehouse_id, user_id) do nothing;
+
+  update public.invitations set accepted_at = now() where id = inv.id;
+
+  select * into wh from public.warehouses where id = inv.warehouse_id;
+  return wh;
+end;
+$$;
+
+grant execute on function public.accept_invitation(uuid) to authenticated;
+
 -- open_one_item
 -- Splits a sealed item into "sealed minus one" + one unit on the opened
 -- sibling in the same box. Merges into an existing opened sibling when

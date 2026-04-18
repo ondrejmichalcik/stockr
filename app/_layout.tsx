@@ -175,13 +175,21 @@ export default function RootLayout() {
 
   // --- Deep link handler: stockr://invite/TOKEN ---
   useEffect(() => {
-    const handle = async (url: string | null) => {
+    const handle = async (url: string | null, origin: string) => {
       if (!url) return;
       const parsed = Linking.parse(url);
+      const hostname = parsed.hostname ?? '';
       const path = parsed.path ?? '';
-      const match = path.match(/^invite\/(.+)$/);
-      if (!match) return;
-      const token = match[1];
+      // stockr://invite/TOKEN → hostname=invite, path=TOKEN
+      // stockr:///invite/TOKEN → hostname="", path=invite/TOKEN
+      let token: string | null = null;
+      if (hostname === 'invite' && path) {
+        token = path;
+      } else {
+        const m = path.match(/^invite\/(.+)$/);
+        if (m) token = m[1];
+      }
+      if (!token) return;
 
       const s = (await supabase.auth.getSession()).data.session;
       if (!s) {
@@ -197,8 +205,8 @@ export default function RootLayout() {
       await processInvite(token, s.user.id);
     };
 
-    Linking.getInitialURL().then(handle);
-    const sub = Linking.addEventListener('url', ({ url }) => handle(url));
+    Linking.getInitialURL().then((u) => handle(u, 'getInitialURL'));
+    const sub = Linking.addEventListener('url', ({ url }) => handle(url, 'addEventListener'));
     return () => sub.remove();
   }, [processInvite]);
 
@@ -245,6 +253,8 @@ export default function RootLayout() {
       >
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(app)" />
+        <Stack.Screen name="invite/[token]" options={{ animation: 'none' }} />
+        <Stack.Screen name="+not-found" />
       </Stack>
     </GestureHandlerRootView>
   );

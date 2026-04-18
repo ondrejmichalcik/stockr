@@ -17,8 +17,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import { Alert } from 'react-native';
 import {
   getConflictCount,
+  getLastPushError,
   getPendingSyncCount,
   getSyncStatus,
   subscribeSyncStatus,
@@ -75,7 +77,19 @@ export function SyncStatusBar({ onReconnect }: { onReconnect?: () => void }) {
   if (state.kind === 'hidden') return null;
 
   const config = BAR_CONFIG[state.kind];
-  const tappable = state.kind === 'conflicts';
+  const tappable = state.kind === 'conflicts' || state.kind === 'pending';
+
+  const onBarPress = () => {
+    if (state.kind === 'conflicts') {
+      router.push('/conflicts' as any);
+    } else if (state.kind === 'pending') {
+      const err = getLastPushError();
+      Alert.alert(
+        'Sync debug',
+        err ? `Last push error:\n${err}` : 'No error recorded. Push may not be running yet.',
+      );
+    }
+  };
 
   const label = (() => {
     switch (state.kind) {
@@ -99,7 +113,7 @@ export function SyncStatusBar({ onReconnect }: { onReconnect?: () => void }) {
         { backgroundColor: config.bg, paddingBottom: Math.max(insets.bottom, spacing.xs) },
         tappable && pressed && { opacity: 0.7 },
       ]}
-      onPress={tappable ? () => router.push('/conflicts' as any) : undefined}
+      onPress={tappable ? onBarPress : undefined}
       disabled={!tappable}
     >
       {state.kind === 'syncing' ? (

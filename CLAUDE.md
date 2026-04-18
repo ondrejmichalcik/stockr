@@ -44,21 +44,41 @@ stockr/
 │   └── test-scenarios.md         ← testovací scénáře pro key flows
 ├── supabase/
 │   └── schema.sql                ← celé DB schéma + RLS + triggery (spustit v Supabase SQL Editoru)
+├── modules/
+│   └── stockr-multipeer/                             ← custom Expo native modul pro MultipeerConnectivity P2P sync
+│       ├── ios/StockrMultipeerModule.swift            ← MCSession + advertiser + browser
+│       ├── ios/StockrMultipeer.podspec
+│       ├── expo-module.config.json
+│       └── src/index.ts                              ← JS API: startSession, invitePeer, sendData, events
 ├── src/
 │   ├── types/database.ts         ← TS typy + domain utility (getExpiryStatus, formatExpiry, …)
 │   ├── lib/
-│   │   ├── supabase.ts           ← Supabase klient + veškeré API funkce
+│   │   ├── supabase.ts           ← Supabase klient + API (SQLite-first s Supabase fallback)
+│   │   ├── localDb.ts            ← SQLite schema + singleton connection
+│   │   ├── localQueries.ts       ← SQLite read functions (12 queries)
+│   │   ├── localWrites.ts        ← SQLite write operations + sync queue
+│   │   ├── sync.ts               ← Bidirectional sync engine (push/pull/conflicts)
+│   │   ├── p2pSync.ts            ← P2P data export/import s last-write-wins merge
+│   │   ├── imageCache.ts         ← Offline image cache (SHA-256 → local .jpg)
+│   │   ├── notifications.ts      ← Local expiry notifications scheduling
+│   │   ├── useNetworkStatus.ts   ← Network connectivity hook
 │   │   └── openFoodFacts.ts      ← EAN lookup + mapování kategorií
 │   └── components/
 │       ├── ItemEditSheet.tsx     ← modal pro edit položky
-│       └── BoxEditSheet.tsx      ← modal pro edit bedny
+│       ├── BoxEditSheet.tsx      ← modal pro edit bedny
+│       └── SyncStatusBar.tsx     ← global offline/syncing/conflicts indicator
 ├── app/                                          ← Expo Router file-based routing
-│   ├── _layout.tsx                               ← root, auth guard, deep link handler (stockr://invite/TOKEN → acceptInvitation), pending-invite SecureStore persist
+│   ├── _layout.tsx                               ← root, auth guard, deep link handler, session persistence, notification tap handler
+│   ├── +native-intent.tsx                        ← deep link rewriting (invite URL → root)
+│   ├── +not-found.tsx                            ← catch-all redirect
+│   ├── invite/[token].tsx                        ← invite deep link route (processes invitation)
 │   ├── (auth)/
-│   │   └── login.tsx                             ← Apple Sign In (žádný auto-create warehouse)
+│   │   └── login.tsx                             ← Apple Sign In + "Continue offline" button
 │   └── (app)/
-│       ├── _layout.tsx                           ← stack navigator
+│       ├── _layout.tsx                           ← stack navigator + SyncStatusBar
 │       ├── index.tsx                             ← Warehouses list (root) — empty state, pill cards, profile icon, FAB
+│       ├── conflicts.tsx                         ← Sync conflict resolution (per-field local vs server)
+│       ├── p2p-sync.tsx                          ← P2P sync via MultipeerConnectivity
 │       └── warehouse/
 │           ├── new.tsx                           ← Create warehouse form
 │           └── [warehouseId]/
@@ -164,7 +184,9 @@ Konkrétní barvy jsou v `src/theme/colors.ts` (Sprint 2.5 design system). Funkc
 - Komentáře v kódu anglicky.
 
 ### 4. Native moduly vyžadují rebuild
-Sprint 2 přidal: `expo-camera`, `expo-haptics`, `expo-clipboard`, `@react-native-community/datetimepicker`, `react-native-svg`. Každý z nich je nativní modul → při přidání nové nativní deps je nutný `npx expo run:ios`, ne jen Metro reload.
+Sprint 2 přidal: `expo-camera`, `expo-haptics`, `expo-clipboard`, `@react-native-community/datetimepicker`, `react-native-svg`.
+Sprint 4' přidal: `expo-network`, `expo-sqlite`, `expo-notifications`, `expo-document-picker`, `stockr-multipeer` (custom Expo module v `modules/`).
+Každý z nich je nativní modul → při přidání nové nativní deps je nutný `eas build` nebo `npx expo run:ios`, ne jen Metro reload.
 
 ### 5. RLS je zdroj pravdy pro oprávnění
 - UI zobrazuje tlačítka optimisticky (i pro member jako by mohl mazat bedny)
@@ -175,7 +197,13 @@ Sprint 2 přidal: `expo-camera`, `expo-haptics`, `expo-clipboard`, `@react-nativ
 ### 6. Sprint stav
 Vývoj běží po sprintech. Detailní stav → **[`.claude/implementation-plan.md`](.claude/implementation-plan.md)**
 
-Aktuálně: **Sprint 3 uzavřen** (2026-04-15 + 2026-04-16). Kompletní feature set: image upload, Claude Vision identifikace (per-device API key), Brother PT-P710BT tisk přes SDK (patchovaný `expo-brother-printer-sdk` pro PT series), TestFlight pipeline (EAS build + ASC + Internal Testing), search + filter na Boxes/Items tabech, move items mezi boxy (single/partial/batch s merge do existujících), box inventura se scan & count workflow (scan→count→report→reconciliation→history), kompaktní expiry labely (3+1 barvy: red/yellow/green/gray). **STRATEGICKÁ ZMĚNA**: offline-first data layer + App Store distribuce (TestFlight 90-day expiry nekompatibilní s prepper use case). Next: Sprint 4' (offline-first: WatermelonDB / PowerSync / custom SQLite) → Sprint 4 (push notifikace) → Sprint 5 (App Store release).
+Aktuálně: **Sprint 4' + 4 code-complete** (2026-04-18). EAS build in progress.
+
+**Sprint 4' (offline-first) ✅**: expo-sqlite local-first data layer, bidirectional sync engine s per-field auto-merge, conflict resolution UI, global SyncStatusBar, image cache s orphan cleanup, session persistence (přežívá token expiry + sign-out recovery), MultipeerConnectivity P2P sync (custom Expo native modul `stockr-multipeer`), invite deep link fix.
+
+**Sprint 4 (notifications) ✅**: local expiry notifications (30d/7d/1d/today configurable windows), app badge count, notification tap → box detail deep link, foreground handler.
+
+**Next**: Sprint 5 — EAS build doběhne → TestFlight test → privacy policy + App Store metadata → Apple review submission.
 
 ---
 

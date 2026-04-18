@@ -881,37 +881,76 @@ export async function listInvitations(warehouseId: string): Promise<Invitation[]
  * throws "already accepted".
  */
 export async function acceptInvitation(token: string, userId: string): Promise<Warehouse> {
-  const { data: inv, error: invErr } = await supabase
-    .from('invitations')
-    .select('*')
-    .eq('token', token)
-    .maybeSingle();
-  if (invErr) throw invErr;
-  if (!inv) throw new Error('Invitation not found.');
-  if (inv.accepted_at) throw new Error('This invitation has already been used.');
-  if (new Date(inv.expires_at).getTime() < Date.now()) {
-    throw new Error('This invitation has expired.');
+  // Uses the accept_invitation RPC (SECURITY DEFINER). Direct SELECT on
+  // invitations is blocked by RLS (invitations_select requires membership),
+  // so the invitee cannot redeem the token via table queries — they can't
+  // even see the row they're about to consume. The RPC validates +
+  // inserts membership + marks token used atomically.
+  const { data: wh, error: rpcErr } = await supabase.rpc('accept_invitation', {
+    invite_token: token,
+  });
+  if (rpcErr) throw new Error(rpcErr.message);
+  if (!wh) throw new Error('Invitation not found.');
+
+  // Persist warehouse + membership to SQLite so the list screen
+  // (which reads locally via getMyWarehousesLocal) sees it immediately.
+  // Without this the user lands back on "/" after accepting and doesn't
+  // see the warehouse until a full re-sync.
+  if (hasInitialSync()) {
+    const db = (await import('./localDb')).getDb();
+    const now = new Date().toISOString();
+    const w = wh as Warehouse;
+    db.runSync(
+      `INSERT OR REPLACE INTO warehouses (id, owner_id, name, created_at, _synced, _local_updated_at)
+       VALUES (?, ?, ?, ?, 1, ?)`,
+      [w.id, w.owner_id, w.name, w.created_at, now],
+    );
+    // Role from RPC is not returned directly; fetch the membership we just
+    // created to capture the correct role (invitation may have been 'owner').
+    const { data: myMembership } = await supabase
+      .from('warehouse_members')
+      .select('role, joined_at')
+      .eq('warehouse_id', w.id)
+      .eq('user_id', userId)
+      .maybeSingle();
+    db.runSync(
+      `INSERT OR REPLACE INTO warehouse_members (warehouse_id, user_id, role, joined_at, _synced)
+       VALUES (?, ?, ?, ?, 1)`,
+      [w.id, userId, (myMembership as any)?.role ?? 'member', (myMembership as any)?.joined_at ?? now],
+    );
+    // Pull boxes/items for the newly joined warehouse so the user can
+    // open it offline right after accepting.
+    try {
+      const { data: boxes } = await supabase
+        .from('boxes')
+        .select('*')
+        .eq('warehouse_id', w.id);
+      for (const b of (boxes ?? []) as any[]) {
+        db.runSync(
+          `INSERT OR REPLACE INTO boxes (id, warehouse_id, name, location, qr_code, nearest_expiry, item_count, created_at, updated_at, _synced, _local_updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          [b.id, b.warehouse_id, b.name, b.location, b.qr_code, b.nearest_expiry, b.item_count, b.created_at, b.updated_at, now],
+        );
+      }
+      const boxIds = (boxes ?? []).map((b: any) => b.id);
+      if (boxIds.length > 0) {
+        const { data: items } = await supabase
+          .from('items')
+          .select('*')
+          .in('box_id', boxIds);
+        for (const i of (items ?? []) as any[]) {
+          db.runSync(
+            `INSERT OR REPLACE INTO items (id, box_id, name, quantity, unit, expiry_date, barcode, image_url, category, notes, opened, damaged, pack_count, last_verified, added_by, created_at, updated_at, _synced, _local_updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+            [i.id, i.box_id, i.name, i.quantity, i.unit, i.expiry_date, i.barcode, i.image_url, i.category, i.notes, i.opened ? 1 : 0, i.damaged ? 1 : 0, i.pack_count, i.last_verified, i.added_by, i.created_at, i.updated_at, now],
+          );
+        }
+      }
+    } catch {
+      // Non-fatal — next sync cycle will pick these up.
+    }
   }
 
-  const { error: memErr } = await supabase.from('warehouse_members').insert({
-    warehouse_id: inv.warehouse_id,
-    user_id: userId,
-    role: inv.role ?? 'member',
-  });
-  if (memErr) throw memErr;
-
-  const { error: updErr } = await supabase
-    .from('invitations')
-    .update({ accepted_at: new Date().toISOString() })
-    .eq('id', inv.id);
-  if (updErr) throw updErr;
-
-  const { data: wh, error: whErr } = await supabase
-    .from('warehouses')
-    .select('*')
-    .eq('id', inv.warehouse_id)
-    .single();
-  if (whErr) throw whErr;
   return wh as Warehouse;
 }
 

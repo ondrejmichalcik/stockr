@@ -508,86 +508,82 @@ Po zjištění že iOS system print dialog Bluetooth tiskárnu nevidí a Brother
 
 ---
 
-## Sprint 4' – Offline-first data layer 🆕 ⏳
+## Sprint 4' – Offline-first data layer ✅ (2026-04-17 — 2026-04-18)
 
-**Cíl**: Udělat Stockr fully offline-capable. Appka musí fungovat bez připojení na síť (reads + writes + QR scan + print) a sync s Supabase probíhá automaticky když je síť dostupná.
+**Cíl**: Stockr fully offline-capable. Appka funguje bez internetu (reads + writes + QR scan + print), sync s Supabase automaticky když je síť dostupná.
 
-**Architecturní volby k rozhodnutí** (before implementation):
-- **WatermelonDB + Supabase sync adapter** — Supabase má [oficiální guide](https://supabase.com/docs/guides/database/watermelondb), RN-native reactive ORM. Proven, widely used.
-- **PowerSync for Supabase** — commercial SaaS offline-first sync, free tier do 10 users, Supabase Postgres replication do local SQLite. Nejvíc polished ale external dependency.
-- **Legend-State + Supabase plugin** — novější reactive state library s built-in persistence a Supabase sync plugin. Méně battle-tested.
-- **Custom SQLite + vlastní sync** — `expo-sqlite` + manual migration scripts + queue-based sync. Maximum kontrola, nejvíc práce, ale žádné external dependencies.
+**Architektura**: Custom SQLite + vlastní sync engine (`expo-sqlite`). Zvoleno kvůli: žádné external deps, maximum kontrola, konzistentní s prepper principem.
 
-**Rough scope** (ne detailní, fáze se ujasní po výběru cesty):
-- ⏳ Local DB schema mirror Supabase tabulek — warehouses, warehouse_members, boxes, items, invitations, custom_products
-- ⏳ Initial sync — při prvním loginu stáhnout vše co user je member
-- ⏳ Write path — všechny mutace (createBox, addItem, updateItem, deleteBox, openOneItem) jdou do local DB first, pak async flush do Supabase
-- ⏳ Read path — `useLiveQuery` nebo ekvivalent, komponenty reaguji na local DB changes bez touch síti
-- ⏳ Sync engine — background task, při app foreground + periodic. Conflict resolution: last-write-wins pro basic ops, custom logic pro delete vs update
-- ⏳ Offline indicator v UI — subtle banner nebo status dot když není sync možný
-- ⏳ Session token persistence — Apple Sign In první login potřebuje internet, po něm cached token musí fungovat indefinitely (nastavit Supabase auth na non-expiring session nebo grace period management)
-- ⏳ Image cache to device filesystem — aktuálně `item.image_url` je public URL na Supabase Storage, offline se obrázky nezobrazí. Download na `FileSystem.documentDirectory/images/{hash}.jpg` při upload, use local path když existuje, fallback na URL
-- ⏳ Conflict resolution pro opened row (open_one_item RPC) — RPC je atomic na serveru, offline ekvivalent bude local transaction s deferred sync
+### Implementované fáze
 
-**Key risks**:
-- Realtime subscriptions (aktuálně `subscribeBoxes`, `subscribeItems`, `subscribeMyWarehouses`) budou refactor nebo emulace — local DB events místo Supabase postgres_changes
-- RLS semantika se musí replikovat v client kódu (aktuálně DB vynucuje, offline client musí sám držet invarianty jako "jen owner může smazat warehouse")
-- `open_one_item` RPC a `create_warehouse_for_me` RPC jsou atomic DB operace — offline ekvivalent potřebuje local transaction emulaci
+- ✅ **SQLite schema** (`src/lib/localDb.ts`) — mirror všech Supabase tabulek + sync metadata (`_synced`, `_changed_fields`, `_deleted_at`, `_local_updated_at`) + `_sync_queue` + `_conflicts`
+- ✅ **Initial full sync** (`sync.ts → initialFullSync`) — při prvním loginu stáhne vše z Supabase do SQLite
+- ✅ **Read path** (`localQueries.ts`) — 12 read funkcí, všechny `supabase.ts` read funkce → SQLite first → Supabase fallback
+- ✅ **Write path** (`localWrites.ts`) — core CRUD (boxes, items) + move + open + condition + warehouses + inventory + custom products, vše SQLite-first s sync queue
+- ✅ **Push sync** (`sync.ts → pushSync`) — FIFO z `_sync_queue`, INSERT→upsert, UPDATE→patch changed fields, DELETE→hard delete
+- ✅ **Pull sync** (`sync.ts → pullSync`) — incremental fetch (updated_at > last_pulled_at), auto-merge nekonfliktních polí, conflict detection pro overlapping changes
+- ✅ **Conflict resolution UI** (`app/(app)/conflicts.tsx`) — per-field výběr local vs server, quick actions "Keep all mine" / "Take all server"
+- ✅ **Global SyncStatusBar** (`src/components/SyncStatusBar.tsx`) — dole na všech screenech, stavy: hidden/offline/syncing/conflicts/pending, tap na conflicts → navigace
+- ✅ **Offline indicator** (`useNetworkStatus` hook + `expo-network`) — poll 15s + app foreground check, auto-sync on reconnect
+- ✅ **Image cache** (`src/lib/imageCache.ts`) — SHA-256 hash → `.jpg` + `.meta` sidecar, prefetch po sync pull, cache po uploadu, orphan cleanup na app startu
+- ✅ **Session persistence** — `cachedUser` v AsyncStorage přežívá token expiry, `lastUser` přežívá sign-out, "Continue offline" tlačítko na login screenu
+- ✅ **Sign-out ochrana** — offline: warning + "Sign out anyway" volba, online: warning o nutnosti internetu pro re-login
+- ✅ **P2P sync** — custom Expo native modul `stockr-multipeer` (MultipeerConnectivity), `p2pSync.ts` export/import s last-write-wins merge, UI screen `app/(app)/p2p-sync.tsx`
+- ✅ **Deep link fix** — `+native-intent.tsx` rewrites `stockr://invite/*` na `/` předtím než Router matchuje, `app/invite/[token].tsx` fallback route
 
----
-
-## Sprint 4 – Sdílení a notifikace ⏳
-
-### Pozvánky
-- ⏳ `app/(app)/settings/index.tsx` — hlavní settings screen (přesunout dočasné "Odhlásit" z Dashboardu)
-- ⏳ `app/(app)/settings/members.tsx` — seznam členů + pozvánkový formulář
-- ⏳ `createInvitation` už existuje v API — UI zbývá
-- ⏳ Sdílení linku `stockr://invite/{token}` přes `expo-sharing` (iMessage, Mail, Copy)
-- ⏳ Deep link handler v `app/_layout.tsx` už parsuje path — otestovat real flow
-- ⏳ Přijímač pozvánky: pokud user není přihlášen, persist token do SecureStore a zpracovat po loginu
-
-### Role-aware UI
-- ⏳ V `listMembers` / `getMyWarehouse` vrátit roli aktuálního usera
-- ⏳ V `box/[id].tsx` action sheetu: pro member skrýt "Smazat bednu"
-- ⏳ Testovat s druhým zařízením / Apple ID
-
-### Push notifikace
-- ⏳ `expo-notifications` setup (permissions, token registration)
-- ⏳ Lokální scheduling po každém otevření appky (přečti items → naplánuj 30d/7d/same-day notifications)
-- ⏳ Supabase Edge Function `daily-expiry-check` (cron trigger)
-- ⏳ Settings pro zapnutí/vypnutí (opt-out)
-
-### FIFO indikátor
-- ⏳ Na dashboardu: na kartě bedny zobrazit "Otevřít první" pro tu s nejbližší expirací
-- ⏳ Odlišit barvou/ikonou
+### Rozhodnutí
+- **Realtime subscriptions ponechány** — online bonus, offline nic nerozbijí, `useFocusEffect` refreshuje data
+- **createWarehouse** — server-first s offline fallback (RPC vytváří membership atomicky)
+- **Invitations/member ops** — zůstávají Supabase-only (vyžadují síť z principu)
+- **P2P sync** — MultipeerConnectivity (Bluetooth/WiFi), auto-accept invitations (same service = trusted family), encrypted transport
 
 ---
 
-## Sprint 5 – Release ⏳
+## Sprint 4 – Notifikace ✅ (2026-04-18)
+
+### Pozvánky (done in Sprint 2.7)
+- ✅ Invitation flow kompletní — create, share, accept, deep link handler
+- ✅ Deep link fix: `+native-intent.tsx` + `app/invite/[token].tsx` fallback route
+
+### Local expiry notifications
+- ✅ `src/lib/notifications.ts` — `expo-notifications` local scheduling
+- ✅ Idempotent reschedule: cancel all → re-schedule z SQLite dat při každém app foreground
+- ✅ 4 reminder windows: 30d, 7d, 1d, today — **user-configurable** toggles v Profile
+- ✅ Already-expired items: reminder pro items co expirly v posledních 3 dnech (tomorrow 8:00)
+- ✅ iOS ~64 notification limit → cap na 60, sorted by nearest trigger
+- ✅ App badge count = počet items expirujících do 30 dní
+- ✅ Foreground handler — notifikace se zobrazí i když je app otevřená
+- ✅ Notification tap → deep link na box detail (`warehouseId` + `boxId` v notification data)
+- ✅ Global on/off toggle + per-window toggles v Profile screenu
+- ✅ Vše lokální — žádný server push, funguje plně offline
+
+---
+
+## Sprint 5 – App Store Release ⏳
+
+### EAS Build (in progress 2026-04-18)
+- ✅ `eas.json` konfigurace (preview profile pro TestFlight)
+- ✅ Předchozí TestFlight buildy fungují (Sprint 3)
+- 🚧 **Nový build s nativními moduly** — `eas build --platform ios --profile preview` spuštěn 2026-04-18
+  - Nové nativní deps: `expo-network`, `expo-sqlite`, `expo-notifications`, `expo-document-picker`, `stockr-multipeer` (custom Expo module)
+  - Po buildu: `eas submit --platform ios --latest` → TestFlight
+- ⏳ Test na 2 zařízeních: offline flow, P2P sync, image cache, session persistence, invite deep link, notifications
+
+### App Store submission
+- ⏳ Privacy policy — jednoduchá stránka (GitHub Pages), vyžadováno pro Apple Sign In
+- ⏳ App Store metadata — screenshots, popis, klíčová slova, kategorie
+- ⏳ App Privacy questionnaire — jaká data se sbírají (email via Apple Sign In, usage data)
+- ⏳ `eas submit --platform ios` → Apple review
 
 ### Assety
-- ✅ `assets/icon.png` — 1024×1024, zelená paleta (nano banana generated)
-- ✅ `assets/splash.png` — 1286×2778, stejná paleta, backgroundColor `#1E5F3E`
-- ⏳ Případné zmenšení splash (z ~5.4 MB na <1 MB) — ImageOptim / pngquant
-- ⏳ `assets/adaptive-icon.png` — foreground layer (prázdný pro iOS-only)
+- ✅ `assets/icon.png` — 1024×1024, zelená paleta
+- ✅ `assets/splash.png` — 1286×2778, login hero
+- ⏳ Případné zmenšení splash (z ~5.4 MB na <1 MB)
 
-### TestFlight build
-- ⏳ `eas.json` konfigurace (preview profile pro TestFlight)
-- ⏳ `eas build --platform ios --profile preview`
-- ⏳ `eas submit --platform ios` — upload na App Store Connect
-- ⏳ Internal Testing group → pozvat manželku emailem
-- ⏳ Test runtime na reálném zařízení (ne simulátoru)
-
-### Polish
+### Polish (nice-to-have, ne blokující)
 - ⏳ Accessibility labels pro screen reader
-- ⏳ Dark mode (appka má zatím jen light)
-- ⏳ iPad layout (pokud `supportsTablet: true` — zatím false)
-- ⏳ Performance audit (React DevTools Profiler)
-- ⏳ Odstranit dev-only email/password login z `login.tsx` před production buildem (`__DEV__` guard to už dělá automaticky)
-
-### Dokumentace
-- ⏳ README.md pro GitHub (pokud bude public repo)
-- ⏳ Aktualizovat CLAUDE.md po Sprintu 5
+- ⏳ Dark mode
+- ⏳ Performance audit
 
 ---
 
@@ -749,14 +745,11 @@ eas submit --platform ios
 
 ## Příště začít
 
-Po otevření nové session a prozkoumání stavu:
+Po otevření nové session:
 
-1. **Brother print test** — EAS build s QR fix (20mm, no logo, portrait rotation) + Brother SDK patch je v queue. Po buildu: `eas submit → TestFlight update → Print to Brother`. Ověřit: QR scan reliability, font čitelnost, 1-stránkový tape, correct rotation.
-2. **Commit** — git commit všech pending changes (search/filter, move, inventura, expiry labels, Brother SDK, label fixes)
-3. **Rozhodni co dál**:
-   - **Sprint 4' (offline-first)** — vysoká priorita kvůli prepper use case. Research: WatermelonDB vs PowerSync vs Legend-State vs custom SQLite.
-   - **Sprint 4 (push notifikace)** — local scheduling pro expiry reminders (funguje i offline)
-   - **Sprint 5 (App Store release)** — screenshots, privacy policy, App Privacy disclosures, Apple review
+1. **EAS Build doběhl?** — zkontrolovat `eas build:list`, pokud ready → `eas submit --platform ios --latest` → TestFlight
+2. **Test na 2 iPhonech** — offline flow, P2P sync, invite deep link, notifications, image cache, session persistence
+3. **App Store prep** — privacy policy, screenshots, metadata, submit
 
 ### Session 2026-04-15 + 2026-04-16 — Sprint 3 UZAVŘEN + features
 

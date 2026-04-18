@@ -194,8 +194,29 @@ export function hasInitialSync(): boolean {
 }
 
 /**
+ * Debounced auto-push. Every enqueueChange schedules a background push
+ * so the queue drains without waiting for app restart or network reconnect.
+ * Coalesces rapid writes (e.g. batch item inserts) into a single sync pass.
+ */
+let _pushTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleAutoPush() {
+  if (_pushTimer) clearTimeout(_pushTimer);
+  _pushTimer = setTimeout(() => {
+    _pushTimer = null;
+    const prev = _currentStatus;
+    setSyncStatus('syncing');
+    pushSync()
+      .catch(() => {})
+      .finally(() => {
+        // Only drop back to idle if we were the one who set syncing.
+        if (_currentStatus === 'syncing') setSyncStatus(prev === 'error' ? 'idle' : prev);
+      });
+  }, 500);
+}
+
+/**
  * Record a local mutation in the sync queue so it can be pushed to
- * Supabase on the next sync cycle.
+ * Supabase on the next sync cycle. Auto-schedules a debounced push.
  */
 export function enqueueChange(
   tableName: string,
@@ -216,6 +237,7 @@ export function enqueueChange(
       payload ? JSON.stringify(payload) : null,
     ],
   );
+  scheduleAutoPush();
 }
 
 /**
@@ -389,7 +411,17 @@ export async function pushSync(): Promise<{ pushed: number; failed: number }> {
           // Convert SQLite booleans back
           if ('opened' in clean) clean.opened = !!clean.opened;
           if ('damaged' in clean) clean.damaged = !!clean.damaged;
-          const { error } = await supabase.from(entry.table_name).upsert(clean);
+          // Tables with secondary unique keys need explicit onConflict so the
+          // upsert UPDATEs instead of failing on a duplicate-key error.
+          // custom_products has unique (warehouse_id, barcode) — two clients
+          // scanning the same product generate different ids but the same
+          // logical row.
+          const upsertOpts = entry.table_name === 'custom_products'
+            ? { onConflict: 'warehouse_id,barcode' }
+            : undefined;
+          const { error } = await supabase
+            .from(entry.table_name)
+            .upsert(clean, upsertOpts as any);
           if (error) throw error;
         }
       } else if (entry.operation === 'UPDATE') {
@@ -431,13 +463,24 @@ export async function pushSync(): Promise<{ pushed: number; failed: number }> {
         [entry.row_id],
       );
       pushed++;
-    } catch {
+    } catch (e: any) {
       failed++;
+      _lastPushError = `${entry.table_name} ${entry.operation} ${entry.row_id?.slice(0, 8)}: ${e?.message ?? String(e)}`;
       // Will retry on next sync cycle
     }
   }
 
   return { pushed, failed };
+}
+
+// Last push error — exposed so the debug overlay / status bar can show
+// why pending changes aren't draining. Cleared on successful full drain.
+let _lastPushError: string | null = null;
+export function getLastPushError(): string | null {
+  return _lastPushError;
+}
+export function clearLastPushError(): void {
+  _lastPushError = null;
 }
 
 // ---- Pull sync: Supabase → local -----------------------------------------
