@@ -1,0 +1,8 @@
+{
+  "name": "kalta-multipeer",
+  "version": "1.0.0",
+  "description": "MultipeerConnectivity P2P sync native module for Kalta",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true
+}

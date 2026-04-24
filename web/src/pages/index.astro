@@ -1,0 +1,90 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Kalta — Home emergency stock tracker">
+  <section class="hero">
+    <div class="container">
+      <h1>Never forget what you stocked up on.</h1>
+      <p class="hero-tagline">
+        Kalta tracks every can, battery, and first-aid kit in real boxes with QR labels. It reminds
+        you before anything expires, so you actually rotate your stock.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#">
+          <span>Download on the App Store</span>
+        </a>
+        <a class="btn btn-secondary" href="#features">Learn more</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="features container-wide" id="features">
+    <div class="features-grid">
+      <div class="feature">
+        <div class="feature-icon">□</div>
+        <h3>QR labels on real boxes</h3>
+        <p>
+          Create a warehouse, print QR labels, stick them on your boxes. Scan to jump straight to
+          what's inside.
+        </p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">▤</div>
+        <h3>Barcode-fast entry</h3>
+        <p>
+          Scan any EAN and Kalta pulls in the product name and category. Add an expiry date and
+          you're done.
+        </p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">⏱</div>
+        <h3>Expiry that actually warns you</h3>
+        <p>
+          Items are color-coded by urgency. Local reminders 30 days, 7 days, and 1 day before —
+          no servers involved.
+        </p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">⇄</div>
+        <h3>Share with your household</h3>
+        <p>
+          Invite your partner or family with a link. Everyone sees the same inventory update in
+          real time.
+        </p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">◎</div>
+        <h3>Works offline</h3>
+        <p>
+          Everything is stored locally first and synced later. Two iPhones can even sync directly
+          over Bluetooth when there's no network.
+        </p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">⚡</div>
+        <h3>Optional AI help</h3>
+        <p>
+          Bring your own Anthropic API key and let Claude identify products from a photo. You stay
+          in control of cost and privacy.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="container">
+    <div class="callout">
+      <h2>Zero tracking. Ever.</h2>
+      <p>
+        No ads, no analytics, no crash reporting, no third-party SDKs. Your data lives on your
+        iPhone and is synced to an encrypted database in the EU. Only you and people you
+        explicitly invite can see your inventory.
+      </p>
+    </div>
+  </section>
+</Layout>

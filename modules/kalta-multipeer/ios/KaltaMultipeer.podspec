@@ -6,7 +6,7 @@ Pod::Spec.new do |s|
   s.homepage       = 'https://github.com/ondrejmichalcik/kalta'
   s.license        = 'MIT'
   s.author         = 'Ondrej Michalcik'
-  s.platform       = :ios, '16.0'
+  s.platform       = :ios, '15.1'
   s.source         = { git: '' }
   s.source_files   = '*.swift'
   s.frameworks     = 'MultipeerConnectivity'

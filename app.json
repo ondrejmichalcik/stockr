@@ -15,20 +15,12 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.ondrejmichalcik.kalta",
-      "buildNumber": "21",
+      "buildNumber": "22",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Kalta uses the camera to scan box QR codes and product barcodes, and to take photos of items.",
         "NSPhotoLibraryUsageDescription": "Kalta uses your photo library to attach product images to items.",
         "NSPhotoLibraryAddUsageDescription": "Kalta saves item photos to your library.",
-        "NSBluetoothAlwaysUsageDescription": "Kalta uses Bluetooth to print QR labels and sync with nearby devices.",
-        "NSBluetoothPeripheralUsageDescription": "Kalta uses Bluetooth to communicate with the label printer and nearby devices.",
-        "NSLocalNetworkUsageDescription": "Kalta uses your local network to sync data with nearby devices.",
-        "NSBonjourServices": [
-          "_expo._tcp",
-          "_kalta-sync._tcp",
-          "_kalta-sync._udp"
-        ],
         "ITSAppUsesNonExemptEncryption": false
       },
       "associatedDomains": []
@@ -51,7 +43,21 @@
         }
       ],
       "expo-sharing",
-      "expo-brother-printer-sdk",
+      [
+        "expo-brother-printer-sdk",
+        {
+          "bluetoothAlwaysUsageDescription": "Kalta uses Bluetooth to print QR labels and sync with nearby devices.",
+          "localNetworkUsageDescription": "Kalta uses your local network to sync data with nearby devices.",
+          "bonjourServices": [
+            "_expo._tcp",
+            "_kalta-sync._tcp",
+            "_kalta-sync._udp",
+            "_ipp._tcp",
+            "_pdl-datastream._tcp",
+            "_printer._tcp"
+          ]
+        }
+      ],
       "expo-font",
       "expo-sqlite"
     ],
