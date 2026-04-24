@@ -92,8 +92,9 @@ Kalta uses last-write-wins automatically. Most of the time this does the right t
 
 ### Troubleshooting P2P
 
-- Make sure **Bluetooth is on** on both devices (WiFi doesn't need to be connected to the same network, but the radio must be on).
-- Make sure neither device is in **Low Power Mode** — it aggressively disables Bluetooth scanning.
+- **Both Bluetooth and WiFi radios must be on** on both devices. Despite the feature name suggesting "Bluetooth sync", iOS's MultipeerConnectivity framework uses both: WiFi (via AWDL, the same protocol as AirDrop) for peer discovery and fast transfer, Bluetooth as a fallback. Without WiFi radio on, devices won't find each other.
+- Your WiFi does **not** need to be connected to any internet — just the radio must be active. Airplane mode with WiFi and Bluetooth manually re-enabled works perfectly.
+- Make sure neither device is in **Low Power Mode** — it aggressively disables peer scanning.
 - The P2P Sync screen has to stay **open on both devices** for them to see each other. Don't background the app during sync.
 - If they don't see each other after 30 seconds, force-close Kalta on both devices and retry.
 - Verify the device name shown in the peer list **matches the device you intend to pair with**. P2P is for trusted devices (family, your own second iPhone) — don't connect to random peers.

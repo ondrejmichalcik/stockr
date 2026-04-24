@@ -76,7 +76,7 @@ To test the AI feature, the reviewer can either:
 
 ## Paid app notes
 
-- Kalta is priced at Tier 3 (~$2.99 USD) with Apple Small Business Program enabled.
+- Kalta is priced at Tier 10 (~$9.99 USD) with Apple Small Business Program enabled.
 - Apple Family Sharing is enabled — one purchase covers all Family Group members.
 - Refunds are handled by Apple via https://reportaproblem.apple.com.
 

@@ -211,7 +211,7 @@ https://kalta.app/privacy
 
 ## Pricing
 
-- **Tier 3** ($2.99 USD, ~79 CZK, ~2,99 EUR)
+- **Tier 10** ($9.99 USD, ~249 CZK, ~9,99 EUR)
 - **Small Business Program** enabled — Apple cut reduced from 30% to 15%.
 - **Family Sharing** enabled — one purchase shared with Apple Family Group members.
 - **Availability:** All countries (default) unless you want to restrict.
