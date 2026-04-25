@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["P59Z5SBM7N.com.ondrejmichalcik.kalta"],
+        "components": [
+          {
+            "/": "/invite/*",
+            "comment": "Match all invitation URLs and open them in Kalta"
+          }
+        ]
+      }
+    ]
+  }
+}

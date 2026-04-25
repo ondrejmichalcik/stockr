@@ -2,17 +2,20 @@
 
 Tracking expiration dates is what makes Kalta different from a generic inventory app. This page covers how expiry dates flow through the app: display, sorting, reminders, notifications.
 
-## Adding an expiry date to an item
+## Three ways an item handles expiry
 
-When adding or editing an item, tap the **Expiration date** field. A date picker opens. Pick the date from the product packaging.
+When you add or edit an item, the **Expiry** section gives you a segmented choice:
 
-<div class="screenshot">[Screenshot: Item edit sheet with date picker expanded]</div>
+- **Has expiry** — the default. A date picker appears below; pick the expiration date from the product packaging.
+- **Never expires** — for things that genuinely don't expire (batteries, flashlights, tools, fabric, hand-warmers). The date picker is hidden, the item is shown as **Never** in lists, and no expiry reminders are scheduled.
 
-Items without an expiry date are allowed — use them for things that don't expire (tools, cookware, fabric, etc.).
+You can also leave the **Has expiry** option selected without picking a date — this is the "I'll fill this in later" state. Such items appear with a grey **No date** label and don't trigger reminders until you set the date.
 
-## The four-level color coding
+<div class="screenshot">[Screenshot: Item edit sheet with the Has expiry / Never expires segmented control]</div>
 
-Every item with an expiry date falls into one of four states, each with its own color:
+## The five expiry states
+
+Every item shows one of these states in lists:
 
 | State | When | Color |
 |---|---|---|
@@ -20,7 +23,8 @@ Every item with an expiry date falls into one of four states, each with its own 
 | **Critical** | Within 30 days | Orange |
 | **Soon** | Within 90 days | Yellow |
 | **OK** | More than 90 days away | Green |
-| **None** | No expiry date set | Grey |
+| **Never** | Marked never-expires | Grey |
+| **No date** | No expiry date set | Grey |
 
 You'll see this coding everywhere an item or box appears: in the warehouse dashboard, inside boxes, in the cross-box **Items** tab.
 

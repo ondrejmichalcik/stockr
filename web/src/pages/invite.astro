@@ -1,0 +1,31 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+// Fallback landing for invite links opened in a browser. Universal Links
+// configured by /.well-known/apple-app-site-association make iOS open
+// the URL natively in Kalta when the app is installed; this page only
+// renders when the recipient doesn't have Kalta yet (or opened the link
+// on a desktop / non-iOS device). The /invite/* → /invite rewrite is
+// configured in public/_redirects.
+---
+
+<Layout
+  title="You're invited to a Kalta warehouse"
+  description="Open this link on an iPhone with Kalta installed to accept the invitation."
+>
+  <section class="hero">
+    <div class="container" style="text-align: center;">
+      <h1>You were invited</h1>
+      <p class="hero-tagline">
+        This is an invitation link to a Kalta warehouse. To accept, open it on an iPhone with
+        Kalta installed — the app will pick it up automatically.
+      </p>
+      <div class="hero-actions" style="justify-content: center;">
+        <span class="btn btn-disabled">
+          <span>Coming to App Store</span>
+        </span>
+        <a class="btn btn-secondary" href="/">Learn more about Kalta</a>
+      </div>
+    </div>
+  </section>
+</Layout>

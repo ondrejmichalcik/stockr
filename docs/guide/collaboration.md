@@ -72,15 +72,27 @@ For day-to-day household use, cloud sharing is simpler — changes sync automati
 3. The other device's name appears in the list.
 4. On one device, tap the peer → **Connect**.
 5. The other device shows a connection confirmation → tap **Accept**.
-6. Once connected, tap **Sync** to exchange data.
+6. Once connected, tap **Sync now** on either device to start the exchange.
 
 <div class="screenshot">[Screenshot: P2P Sync screen showing discovered peer and Connect button]</div>
 
+### Review and accept
+
+Once you tap **Sync now**, both devices exchange their data and show a **review screen**:
+
+- A banner at the top: "Changes from {peer name}".
+- A list of every change the peer's data would make to your local copy: items added, item fields modified (quantity, notes, expiry, …) shown as a red "before" / green "after" diff, just like the pending changes screen.
+- Any **conflicts** (you and the peer edited the same field with different values) are flagged in the same list with a warning icon.
+
+At the bottom: **Reject** or **Accept**.
+
+Both devices must independently tap **Accept** before any change is written to either local database. If either side taps **Reject** — or one of you closes the screen / the connection drops — the sync is canceled and **nothing is saved on either side**.
+
+After both peers accept, each device applies the other's bundle to its local data. Conflicts (if any) get logged so you can resolve them later in **Settings → Conflicts**.
+
 ### What's exchanged
 
-Both devices send each other a JSON bundle of their local data: warehouses, boxes, items, members, custom products, inventory sessions. The other side merges it using a **last-write-wins per field** rule: for each field of each item, whichever edit was most recent wins.
-
-Different fields on the same item can come from different devices — for example, if you changed the quantity on device A and the notes on device B, the merged result keeps both changes.
+Both devices send each other a JSON bundle of their local data: warehouses, boxes, items, members, custom products, inventory sessions. The receiving side merges it using a **per-field merge with baseline awareness**: a field is considered a conflict only when both sides edited it concurrently to different values. If you and the peer edited different fields on the same item, both edits are kept — no conflict.
 
 ### Encryption
 
@@ -88,7 +100,7 @@ The MultipeerConnectivity session is **TLS-encrypted end-to-end** by Apple's fra
 
 ### Conflict resolution
 
-Kalta uses last-write-wins automatically. Most of the time this does the right thing. In rare cases where both devices edited the same field at nearly the same time, the app may flag the conflict in the Settings → Conflicts screen so you can pick the correct version manually.
+Real conflicts (both sides edited the same field) get added to **Settings → Conflicts** after the sync completes. There you pick the correct value per field, the same flow as for cloud sync conflicts.
 
 ### Troubleshooting P2P
 

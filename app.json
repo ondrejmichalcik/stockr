@@ -23,7 +23,7 @@
         "NSPhotoLibraryAddUsageDescription": "Kalta saves item photos to your library.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "associatedDomains": []
+      "associatedDomains": ["applinks:kalta.app"]
     },
     "plugins": [
       "expo-router",

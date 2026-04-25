@@ -1,9 +1,8 @@
 // ============================================================================
-// Kalta – Login (Apple Sign In + dev email fallback)
+// Kalta – Login (Apple Sign In)
 // ============================================================================
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   ImageBackground,
   KeyboardAvoidingView,
@@ -12,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -33,9 +31,6 @@ const LAST_USER_KEY = 'kalta:lastUser';
 export default function LoginScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [devEmail, setDevEmail] = useState('');
-  const [devPassword, setDevPassword] = useState('');
-  const [devLoading, setDevLoading] = useState(false);
   // Show "Continue offline" when local data exists from a previous session
   const [canContinueOffline, setCanContinueOffline] = useState(false);
   const [offlineUserId, setOfflineUserId] = useState<string | null>(null);
@@ -120,29 +115,6 @@ export default function LoginScreen() {
     }
   };
 
-  // --------------------------------------------------------------------------
-  // DEV ONLY: Email + password login to bypass Apple Sign In in the simulator.
-  // This block is not rendered in production builds (__DEV__ === false).
-  // --------------------------------------------------------------------------
-  const handleDevLogin = async () => {
-    const email = devEmail.trim();
-    const password = devPassword;
-    if (!email || !password) {
-      Alert.alert('Missing credentials', 'Enter email and password.');
-      return;
-    }
-    try {
-      setDevLoading(true);
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      if (!data.session) throw new Error('Sign in failed.');
-    } catch (e: any) {
-      Alert.alert('Dev login failed', e?.message ?? 'Unknown error');
-    } finally {
-      setDevLoading(false);
-    }
-  };
-
   return (
     <ImageBackground
       source={require('@/assets/login-hero.png')}
@@ -185,52 +157,6 @@ export default function LoginScreen() {
                   <Icon sf="wifi.slash" size={16} color={colors.heroText} />
                   <Text style={styles.offlineBtnText}>Continue offline</Text>
                 </Pressable>
-              )}
-
-              {__DEV__ && (
-                <View style={styles.devSection}>
-                  <View style={styles.divider}>
-                    <View style={styles.dividerLine} />
-                    <Text style={styles.dividerText}>DEV ONLY</Text>
-                    <View style={styles.dividerLine} />
-                  </View>
-
-                  <TextInput
-                    value={devEmail}
-                    onChangeText={setDevEmail}
-                    placeholder="test@kalta.local"
-                    placeholderTextColor={colors.heroTextSubtle}
-                    style={styles.input}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="email-address"
-                    textContentType="username"
-                  />
-                  <TextInput
-                    value={devPassword}
-                    onChangeText={setDevPassword}
-                    placeholder="password"
-                    placeholderTextColor={colors.heroTextSubtle}
-                    style={styles.input}
-                    secureTextEntry
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    textContentType="password"
-                    returnKeyType="go"
-                    onSubmitEditing={handleDevLogin}
-                  />
-                  <Pressable
-                    style={[styles.devBtn, devLoading && { opacity: 0.6 }]}
-                    onPress={handleDevLogin}
-                    disabled={devLoading}
-                  >
-                    {devLoading ? (
-                      <ActivityIndicator color={colors.heroTextMuted} />
-                    ) : (
-                      <Text style={styles.devBtnText}>Dev login (skip Apple)</Text>
-                    )}
-                  </Pressable>
-                </View>
               )}
             </View>
           </ScrollView>
@@ -306,51 +232,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: spacing.md,
     color: colors.heroTextMuted,
-  },
-
-  // Dev section
-  devSection: {
-    marginTop: spacing.xl,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.heroBorder,
-  },
-  dividerText: {
-    ...typography.caption2,
-    color: colors.heroTextSubtle,
-    letterSpacing: 1.5,
-    marginHorizontal: spacing.sm,
-  },
-  input: {
-    ...typography.subhead,
-    backgroundColor: colors.heroSurface,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.heroText,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.heroBorder,
-  },
-  devBtn: {
-    marginTop: spacing.xs,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.heroSurface,
-    borderWidth: 1,
-    borderColor: colors.heroBorder,
-    alignItems: 'center',
-  },
-  devBtnText: {
-    ...typography.footnote,
-    color: colors.heroTextMuted,
-    fontWeight: '600',
   },
 });

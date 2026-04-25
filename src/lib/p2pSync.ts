@@ -20,8 +20,9 @@
 //                                  /conflicts screen, the same UI cloud
 //                                  sync conflicts use.
 //
-// Deletes are intentionally NOT propagated via P2P — only `_deleted_at IS
-// NULL` rows go in the bundle. Deletes flow through cloud sync.
+// Soft-deletes ARE propagated via P2P — every row is exported including
+// `_deleted_at` so the receiver can apply the same tombstone locally and
+// stay in sync with the peer's view of what's been removed.
 // ============================================================================
 import { getDb } from './localDb';
 import { recalcBoxCacheLocal } from './localWrites';
@@ -74,9 +75,22 @@ const BOOL_FIELDS = new Set(['opened', 'damaged']);
 // All P2P messages over the wire go through encodeMessage / decodeMessage.
 // ----------------------------------------------------------------------------
 
+/**
+ * Resolution map for in-session conflict picks. Keys are
+ * `${table}:${rowId}:${field}` — the value is whichever absolute value
+ * the user chose. Both peers exchange their resolutions when accepting;
+ * the import only proceeds when every entry matches across the two
+ * peers (otherwise we surface a disagreement screen and let them retry).
+ */
+export type P2PResolutions = Record<string, unknown>;
+
+export function resolutionKey(table: string, rowId: string, field: string): string {
+  return `${table}:${rowId}:${field}`;
+}
+
 export type P2PMessage =
   | { type: 'BUNDLE'; bundle: string; senderName?: string }
-  | { type: 'ACCEPT' }
+  | { type: 'ACCEPT'; resolutions?: P2PResolutions }
   | { type: 'REJECT' };
 
 export function encodeMessage(msg: P2PMessage): string {
@@ -99,15 +113,18 @@ export function decodeMessage(raw: string): P2PMessage | null {
 export function exportSyncBundle(userId: string): string {
   const db = getDb();
 
+  // Soft-deletes are included so peers see and apply the same tombstones.
+  // The bundle is small enough (text-only, no blobs) that historic deletes
+  // don't blow up payload size at the family scale Kalta is built for.
   const bundle: SyncBundle = {
     version: 1,
     timestamp: new Date().toISOString(),
     senderId: userId,
-    warehouses: db.getAllSync('SELECT * FROM warehouses WHERE _deleted_at IS NULL'),
-    warehouse_members: db.getAllSync('SELECT * FROM warehouse_members WHERE _deleted_at IS NULL'),
-    boxes: db.getAllSync('SELECT * FROM boxes WHERE _deleted_at IS NULL'),
-    items: db.getAllSync('SELECT * FROM items WHERE _deleted_at IS NULL'),
-    custom_products: db.getAllSync('SELECT * FROM custom_products WHERE _deleted_at IS NULL'),
+    warehouses: db.getAllSync('SELECT * FROM warehouses'),
+    warehouse_members: db.getAllSync('SELECT * FROM warehouse_members'),
+    boxes: db.getAllSync('SELECT * FROM boxes'),
+    items: db.getAllSync('SELECT * FROM items'),
+    custom_products: db.getAllSync('SELECT * FROM custom_products'),
     inventory_sessions: db.getAllSync('SELECT * FROM inventory_sessions'),
     inventory_lines: db.getAllSync('SELECT * FROM inventory_lines'),
   };
@@ -125,7 +142,7 @@ export function exportSyncBundle(userId: string): string {
 export interface P2PPreviewEntry {
   table_name: string;
   row_id: string;
-  operation: 'INSERT' | 'UPDATE';
+  operation: 'INSERT' | 'UPDATE' | 'DELETE';
   /** Fields that would change for an UPDATE; null for INSERT. */
   changed_fields: string[] | null;
   /** Current local values for the changed fields (red side of the diff). */
@@ -170,12 +187,25 @@ export function previewSyncBundle(jsonString: string): P2PPreviewEntry[] {
         `SELECT * FROM ${table} WHERE id = ?`,
         [remote.id],
       );
+      const remoteDeleted = remote._deleted_at != null;
 
       if (!local) {
+        if (remoteDeleted) continue; // peer tombstoned a row we never had
         // Would be inserted as a brand-new resource.
         out.push(buildPreviewEntry(db, table, remote, null, null, [], 'INSERT'));
         continue;
       }
+
+      // Peer is asking us to delete a row that's still alive locally.
+      if (remoteDeleted) {
+        if (local._deleted_at != null) continue; // already deleted, no-op
+        out.push(buildPreviewEntry(db, table, remote, local, null, [], 'DELETE'));
+        continue;
+      }
+
+      // Locally deleted, peer still has it alive — local delete wins,
+      // nothing to preview (we won't resurrect).
+      if (local._deleted_at != null) continue;
 
       // Existing row — figure out what would change.
       const diffFields = mergeFields.filter((f) =>
@@ -215,7 +245,7 @@ function buildPreviewEntry(
   local: any | null,
   diffFields: string[] | null,
   conflictFields: string[],
-  operation: 'INSERT' | 'UPDATE',
+  operation: 'INSERT' | 'UPDATE' | 'DELETE',
 ): P2PPreviewEntry {
   const changedFields = diffFields;
   const beforeValues =
@@ -321,10 +351,18 @@ function lookupPreviewDisplay(
 
 /**
  * Import a sync bundle from another device and merge into local SQLite.
+ * When `resolutions` is supplied, fields with a resolution entry skip the
+ * usual conflict path and the resolution's value is applied directly —
+ * this is how the P2P review-and-accept flow forces both peers onto the
+ * same final value for every conflicted field.
+ *
  * Returns stats about what changed and how many user-resolvable conflicts
  * were detected.
  */
-export function importSyncBundle(jsonString: string): {
+export function importSyncBundle(
+  jsonString: string,
+  resolutions?: P2PResolutions,
+): {
   inserted: number;
   updated: number;
   skipped: number;
@@ -335,12 +373,13 @@ export function importSyncBundle(jsonString: string): {
 
   const db = getDb();
   const stats = { inserted: 0, updated: 0, skipped: 0, conflicts: 0 };
+  const resolutionMap: P2PResolutions = resolutions ?? {};
 
   db.execSync('BEGIN TRANSACTION;');
   try {
     // Warehouses
     for (const row of bundle.warehouses) {
-      mergeRowPerField(db, 'warehouses', row, MERGE_FIELDS.warehouses, stats);
+      mergeRowPerField(db, 'warehouses', row, MERGE_FIELDS.warehouses, stats, resolutionMap);
     }
 
     // Warehouse members (composite PK, no per-field history)
@@ -363,26 +402,26 @@ export function importSyncBundle(jsonString: string): {
 
     // Boxes
     for (const row of bundle.boxes) {
-      mergeRowPerField(db, 'boxes', row, MERGE_FIELDS.boxes, stats);
+      mergeRowPerField(db, 'boxes', row, MERGE_FIELDS.boxes, stats, resolutionMap);
     }
 
     // Items — track which boxes were affected so we can recompute caches.
     const affectedBoxIds = new Set<string>();
     for (const row of bundle.items) {
       const before = stats.inserted + stats.updated + stats.conflicts;
-      mergeRowPerField(db, 'items', row, MERGE_FIELDS.items, stats);
+      mergeRowPerField(db, 'items', row, MERGE_FIELDS.items, stats, resolutionMap);
       const after = stats.inserted + stats.updated + stats.conflicts;
       if (after > before) affectedBoxIds.add(row.box_id);
     }
 
     // Custom products
     for (const row of bundle.custom_products) {
-      mergeRowPerField(db, 'custom_products', row, MERGE_FIELDS.custom_products, stats);
+      mergeRowPerField(db, 'custom_products', row, MERGE_FIELDS.custom_products, stats, resolutionMap);
     }
 
     // Inventory sessions
     for (const row of bundle.inventory_sessions) {
-      mergeRowPerField(db, 'inventory_sessions', row, MERGE_FIELDS.inventory_sessions, stats);
+      mergeRowPerField(db, 'inventory_sessions', row, MERGE_FIELDS.inventory_sessions, stats, resolutionMap);
     }
 
     // Inventory lines (append-only, no merge — just insert if missing)
@@ -423,13 +462,52 @@ function mergeRowPerField(
   remote: any,
   mergeFields: string[],
   stats: { inserted: number; updated: number; skipped: number; conflicts: number },
+  resolutions: P2PResolutions = {},
 ): void {
   const local = db.getFirstSync(`SELECT * FROM ${table} WHERE id = ?`, [remote.id]) as any;
+  const remoteDeleted = remote._deleted_at != null;
 
-  // Case 1: row missing locally — insert it.
+  // Case 1: row missing locally — insert it (unless the peer has it
+  // tombstoned; importing a deleted row would just be churn).
   if (!local) {
+    if (remoteDeleted) {
+      stats.skipped++;
+      return;
+    }
     insertRow(db, table, remote);
     stats.inserted++;
+    return;
+  }
+
+  // Case 1b: peer marked the row as deleted. Propagate the tombstone if
+  // we don't already have one. Last-write-wins on delete: if both sides
+  // have a delete, take the older timestamp so the row is consistently
+  // marked as removed at its earliest known moment.
+  if (remoteDeleted) {
+    if (local._deleted_at != null) {
+      // Both deleted — keep the earlier _deleted_at (cosmetic).
+      if (remote._deleted_at < local._deleted_at) {
+        db.runSync(
+          `UPDATE ${table} SET _deleted_at = ? WHERE id = ?`,
+          [remote._deleted_at, remote.id],
+        );
+      }
+      stats.skipped++;
+      return;
+    }
+    db.runSync(
+      `UPDATE ${table} SET _deleted_at = ?, _synced = 1, _local_updated_at = NULL WHERE id = ?`,
+      [remote._deleted_at, remote.id],
+    );
+    stats.updated++;
+    return;
+  }
+
+  // Case 1c: locally deleted but peer still has it as alive. We don't
+  // resurrect rows from a stale peer — local delete wins. The peer will
+  // pick up our tombstone next time they import a bundle from us.
+  if (local._deleted_at != null) {
+    stats.skipped++;
     return;
   }
 
@@ -465,12 +543,35 @@ function mergeRowPerField(
     return;
   }
 
+  // The peer's own pending-edit set, if their bundle row carries it.
+  // Bundles SELECT * the row so this column comes through unchanged,
+  // but rows where the peer is fully synced have it null/empty.
+  let peerChangedFields: string[] | null = null;
+  if (typeof remote._changed_fields === 'string' && remote._changed_fields.length > 0) {
+    try {
+      const parsed = JSON.parse(remote._changed_fields);
+      if (Array.isArray(parsed)) peerChangedFields = parsed as string[];
+    } catch { /* malformed — treat as null */ }
+  }
+
   const realConflicts = localChangedFields.filter((f) => {
     if (!baseline || !(f in baseline.values)) {
       // No baseline captured (legacy entry) — fall back to value-only diff.
       return findDiffFields(local, remote, [f]).length > 0;
     }
-    return !valuesEqual(f, baseline.values[f], remote[f]);
+    if (valuesEqual(f, baseline.values[f], remote[f])) {
+      // Remote value matches my baseline — peer hasn't moved on this field.
+      return false;
+    }
+    // Remote value differs from baseline. If we know the peer's pending
+    // edits, only flag a conflict when the peer ACTIVELY edited this
+    // field. Otherwise the difference comes from upstream propagation
+    // (e.g., the cloud already received and replayed my own edit back to
+    // the peer) and there's no real concurrent disagreement.
+    if (peerChangedFields !== null && !peerChangedFields.includes(f)) {
+      return false;
+    }
+    return true;
   });
 
   const autoMergeFields = mergeFields.filter((f) => {
@@ -478,10 +579,31 @@ function mergeRowPerField(
     return findDiffFields(local, remote, [f]).length > 0;
   });
 
-  if (realConflicts.length > 0) {
+  // If the caller supplied in-session resolutions for any of these
+  // conflicts (P2P review-and-accept flow), apply the agreed value
+  // directly and treat the field as resolved instead of stashing into
+  // `_conflicts`. Anything without a resolution falls back to the
+  // existing _conflicts behaviour so the user can still resolve it from
+  // /conflicts later.
+  const unresolvedConflicts: string[] = [];
+  for (const f of realConflicts) {
+    const key = resolutionKey(table, remote.id, f);
+    if (key in resolutions) {
+      const chosen = resolutions[key];
+      const dbValue = BOOL_FIELDS.has(f) ? (chosen ? 1 : 0) : (chosen ?? null);
+      db.runSync(`UPDATE ${table} SET ${f} = ? WHERE id = ?`, [dbValue, remote.id]);
+      // Field is now in agreement with the peer — drop it from
+      // _changed_fields so future syncs don't think it's still pending.
+      removeFromChangedFields(db, table, remote.id, f);
+    } else {
+      unresolvedConflicts.push(f);
+    }
+  }
+
+  if (unresolvedConflicts.length > 0) {
     // Real conflict — both sides modified at least one of the same fields
-    // with different values. Store for user resolution; reuse the cloud
-    // _conflicts table so /conflicts UI handles both sources.
+    // with different values, and no resolution was supplied. Store for
+    // user resolution via the existing /conflicts UI.
     db.runSync(
       `INSERT INTO _conflicts (table_name, row_id, local_data, server_data, conflicting_fields)
        VALUES (?, ?, ?, ?, ?)`,
@@ -490,10 +612,18 @@ function mergeRowPerField(
         remote.id,
         JSON.stringify(local),
         JSON.stringify(remote),
-        JSON.stringify(realConflicts),
+        JSON.stringify(unresolvedConflicts),
       ],
     );
     stats.conflicts++;
+    return;
+  }
+
+  // All conflicts (if any) were resolved in-session. If we also did
+  // any auto-merge field updates we count those below; otherwise note
+  // the row as updated for stats.
+  if (realConflicts.length > 0 && autoMergeFields.length === 0) {
+    stats.updated++;
     return;
   }
 
@@ -515,6 +645,35 @@ function mergeRowPerField(
   }
 
   stats.skipped++;
+}
+
+// Drop a field from a row's `_changed_fields` JSON list. Used after an
+// in-session conflict resolution agrees on a value: the field is no
+// longer "pending" since both peers have committed to the same value.
+function removeFromChangedFields(
+  db: any,
+  table: string,
+  rowId: string,
+  field: string,
+): void {
+  const row = db.getFirstSync(
+    `SELECT _changed_fields FROM ${table} WHERE id = ?`,
+    [rowId],
+  ) as { _changed_fields: string | null } | undefined;
+  if (!row?._changed_fields) return;
+  let list: string[] = [];
+  try {
+    list = JSON.parse(row._changed_fields);
+    if (!Array.isArray(list)) return;
+  } catch {
+    return;
+  }
+  const next = list.filter((f) => f !== field);
+  const json = next.length > 0 ? JSON.stringify(next) : null;
+  db.runSync(
+    `UPDATE ${table} SET _changed_fields = ? WHERE id = ?`,
+    [json, rowId],
+  );
 }
 
 // Compare values consistent with sync.ts; reused by mergeRowPerField.

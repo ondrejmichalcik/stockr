@@ -1,0 +1,8 @@
+# Cloudflare Pages redirect / rewrite rules.
+# https://developers.cloudflare.com/pages/configuration/redirects/
+
+# Rewrite arbitrary invite tokens to a single static landing page so the
+# URL stays /invite/<token> (Universal Links require the literal path)
+# but anyone hitting it in a browser without Kalta sees a useful page
+# instead of 404.
+/invite/* /invite 200

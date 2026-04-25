@@ -29,8 +29,10 @@ import {
   exportSyncBundle,
   importSyncBundle,
   previewSyncBundle,
+  resolutionKey,
   type P2PMessage,
   type P2PPreviewEntry,
+  type P2PResolutions,
 } from '@/src/lib/p2pSync';
 import { colors, radius, spacing, typography } from '@/src/theme';
 import { Icon } from '@/src/components/Icon';
@@ -55,6 +57,7 @@ type Phase =
   | 'exchanging'    // sent my bundle, waiting for peer's
   | 'reviewing'    // both bundles exchanged, user must accept/reject
   | 'waiting_peer' // I accepted, waiting for peer's decision
+  | 'disagreed'    // both accepted but conflict picks differ
   | 'applying'     // both accepted, writing to local DB
   | 'done'
   | 'rejected'
@@ -77,6 +80,11 @@ export default function P2PSyncScreen() {
   const [preview, setPreview] = useState<P2PPreviewEntry[]>([]);
   const [myDecision, setMyDecision] = useState<Decision>('pending');
   const [peerDecision, setPeerDecision] = useState<Decision>('pending');
+  // Per-field resolutions for conflicts in this exchange. Defaults to
+  // each peer's own local ("mine") value; the user can flip individual
+  // fields to the peer's value before accepting. Both peers must end up
+  // with the exact same map for the apply to proceed.
+  const [myResolutions, setMyResolutions] = useState<P2PResolutions>({});
 
   const [syncResult, setSyncResult] = useState<{ inserted: number; updated: number; conflicts: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -89,10 +97,13 @@ export default function P2PSyncScreen() {
   const myDecisionRef = useRef<Decision>('pending');
   const peerDecisionRef = useRef<Decision>('pending');
   const peerBundleRef = useRef<string | null>(null);
+  const myResolutionsRef = useRef<P2PResolutions>({});
+  const peerResolutionsRef = useRef<P2PResolutions | null>(null);
 
   useEffect(() => { myDecisionRef.current = myDecision; }, [myDecision]);
   useEffect(() => { peerDecisionRef.current = peerDecision; }, [peerDecision]);
   useEffect(() => { peerBundleRef.current = peerBundle; }, [peerBundle]);
+  useEffect(() => { myResolutionsRef.current = myResolutions; }, [myResolutions]);
 
   useEffect(() => {
     getActiveUserId().then((uid) => { userIdRef.current = uid; });
@@ -106,6 +117,8 @@ export default function P2PSyncScreen() {
     setPreview([]);
     setMyDecision('pending');
     setPeerDecision('pending');
+    setMyResolutions({});
+    peerResolutionsRef.current = null;
     setSyncResult(null);
     setRejectedBy(null);
   }, []);
@@ -131,13 +144,15 @@ export default function P2PSyncScreen() {
     }
   }, [resetExchangeState]);
 
-  // Apply the peer's bundle locally and finish.
+  // Apply the peer's bundle locally and finish. Both peers reach this
+  // point only after exchanging matching resolution maps, so the import
+  // is deterministic and converges both devices to the same state.
   const applyPeerBundle = useCallback(() => {
     const bundle = peerBundleRef.current;
     if (!bundle) return;
     setPhase('applying');
     try {
-      const result = importSyncBundle(bundle);
+      const result = importSyncBundle(bundle, myResolutionsRef.current);
       setSyncResult({
         inserted: result.inserted,
         updated: result.updated,
@@ -222,12 +237,23 @@ export default function P2PSyncScreen() {
   const handleIncomingMessage = useCallback((msg: P2PMessage) => {
     if (msg.type === 'BUNDLE') {
       // Peer sent their bundle. Compute preview and move to review.
+      // Pre-populate `myResolutions` with each conflict's local value so
+      // the picker has a sensible default — accepting without changing
+      // anything keeps the user's own edits.
       const bundle = msg.bundle;
       try {
         const computed = previewSyncBundle(bundle);
+        const defaults: P2PResolutions = {};
+        for (const e of computed) {
+          for (const f of e.conflict_fields) {
+            const key = resolutionKey(e.table_name, e.row_id, f);
+            defaults[key] = e.before_values?.[f] ?? null;
+          }
+        }
         setPeerBundle(bundle);
         setPeerSenderName(msg.senderName ?? null);
         setPreview(computed);
+        setMyResolutions(defaults);
         setPhase('reviewing');
       } catch (err: any) {
         setErrorMsg(err?.message ?? 'Could not parse peer bundle');
@@ -238,9 +264,15 @@ export default function P2PSyncScreen() {
 
     if (msg.type === 'ACCEPT') {
       setPeerDecision('accept');
-      // If I'm already accepted, both sides agree → apply.
+      peerResolutionsRef.current = msg.resolutions ?? {};
+      // If I'm already accepted, compare resolutions. Both peers must
+      // have made the same picks for each conflict before we apply.
       if (myDecisionRef.current === 'accept') {
-        applyPeerBundle();
+        if (resolutionsAgree(myResolutionsRef.current, peerResolutionsRef.current)) {
+          applyPeerBundle();
+        } else {
+          setPhase('disagreed');
+        }
       }
       return;
     }
@@ -292,19 +324,40 @@ export default function P2PSyncScreen() {
 
   const handleAccept = useCallback(async () => {
     setMyDecision('accept');
+    const resolutions = myResolutionsRef.current;
     try {
       const mp = await resolveMultipeer();
-      await mp.sendData(encodeMessage({ type: 'ACCEPT' }));
+      await mp.sendData(encodeMessage({ type: 'ACCEPT', resolutions }));
     } catch {
       /* peer may have disconnected; we'll detect via onDisconnected */
     }
     Haptics.selectionAsync().catch(() => {});
-    if (peerDecisionRef.current === 'accept') {
-      applyPeerBundle();
+    if (peerDecisionRef.current === 'accept' && peerResolutionsRef.current !== null) {
+      if (resolutionsAgree(resolutions, peerResolutionsRef.current)) {
+        applyPeerBundle();
+      } else {
+        setPhase('disagreed');
+      }
     } else {
       setPhase('waiting_peer');
     }
   }, [applyPeerBundle]);
+
+  // User picks "Mine" / "Theirs" for a single conflict field.
+  const handlePickResolution = useCallback((key: string, value: unknown) => {
+    setMyResolutions((prev) => ({ ...prev, [key]: value }));
+    Haptics.selectionAsync().catch(() => {});
+  }, []);
+
+  // After a disagreement, both peers reset their decision and re-enter
+  // reviewing so they can adjust picks. The peer reaches the same state
+  // independently because the comparison is deterministic.
+  const handleAdjustPicks = useCallback(() => {
+    setMyDecision('pending');
+    setPeerDecision('pending');
+    peerResolutionsRef.current = null;
+    setPhase('reviewing');
+  }, []);
 
   const handleReject = useCallback(async () => {
     setMyDecision('reject');
@@ -449,6 +502,8 @@ export default function P2PSyncScreen() {
           onAccept={handleAccept}
           onReject={handleReject}
           peerDecision={peerDecision}
+          resolutions={myResolutions}
+          onPickResolution={handlePickResolution}
         />
       )}
 
@@ -465,6 +520,30 @@ export default function P2PSyncScreen() {
             onPress={handleReject}
           >
             <Text style={styles.secondaryBtnText}>Cancel</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {phase === 'disagreed' && (
+        <View style={styles.center}>
+          <Icon sf="exclamationmark.triangle.fill" size={64} color={colors.warningText} />
+          <Text style={styles.headline}>Picks don't match</Text>
+          <Text style={styles.description}>
+            You and {peerLabel} chose different values for one or more conflicts. Both devices
+            need to land on the same picks before applying.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.8 }]}
+            onPress={handleAdjustPicks}
+          >
+            <Icon sf="arrow.triangle.2.circlepath" size={18} color={colors.textOnPrimary} />
+            <Text style={styles.primaryBtnText}>Adjust picks</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.6 }]}
+            onPress={handleReject}
+          >
+            <Text style={styles.secondaryBtnText}>Cancel sync</Text>
           </Pressable>
         </View>
       )}
@@ -574,18 +653,46 @@ export default function P2PSyncScreen() {
 // Review list — renders the proposed changes from the peer's bundle.
 // ----------------------------------------------------------------------------
 
+// Compare two resolution maps for full agreement. We require identical
+// key sets and identical values per key — anything missing on one side
+// or differing in value blocks the apply and routes both peers to the
+// "disagreed" screen so they can adjust before retrying.
+function resolutionsAgree(a: P2PResolutions, b: P2PResolutions): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    if (!(k in a) || !(k in b)) return false;
+    const av = a[k];
+    const bv = b[k];
+    if (av === bv) continue;
+    if (av == null && bv == null) continue;
+    if (String(av ?? '') === String(bv ?? '')) continue;
+    return false;
+  }
+  return true;
+}
+
+function isResolutionValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null && b == null) return true;
+  return String(a ?? '') === String(b ?? '');
+}
+
 function ReviewList({
   peerLabel,
   preview,
   onAccept,
   onReject,
   peerDecision,
+  resolutions,
+  onPickResolution,
 }: {
   peerLabel: string;
   preview: P2PPreviewEntry[];
   onAccept: () => void;
   onReject: () => void;
   peerDecision: Decision;
+  resolutions: P2PResolutions;
+  onPickResolution: (key: string, value: unknown) => void;
 }) {
   const conflictCount = preview.reduce((n, e) => n + e.conflict_fields.length, 0);
   const insertCount = preview.filter((e) => e.operation === 'INSERT').length;
@@ -623,8 +730,20 @@ function ReviewList({
           data={preview}
           keyExtractor={(p) => `${p.table_name}:${p.row_id}`}
           contentContainerStyle={styles.reviewList}
-          renderItem={({ item }) => <ReviewCard entry={item} />}
+          renderItem={({ item }) => (
+            <ReviewCard
+              entry={item}
+              resolutions={resolutions}
+              onPickResolution={onPickResolution}
+            />
+          )}
         />
+      )}
+      {conflictCount > 0 && (
+        <Text style={styles.conflictHint}>
+          Pick a value for each ⚠︎ conflict — both you and {peerLabel} must land on the same
+          choice for the sync to apply.
+        </Text>
       )}
 
       <View style={styles.actionBar}>
@@ -687,12 +806,22 @@ function formatValue(field: string, value: unknown): string {
   return String(value);
 }
 
-function ReviewCard({ entry }: { entry: P2PPreviewEntry }) {
+function ReviewCard({
+  entry,
+  resolutions,
+  onPickResolution,
+}: {
+  entry: P2PPreviewEntry;
+  resolutions: P2PResolutions;
+  onPickResolution: (key: string, value: unknown) => void;
+}) {
   const fields = entry.changed_fields ?? [];
   const visible = fields.filter((f) => {
     if (!entry.before_values || !entry.after_values) return true;
     return formatValue(f, entry.before_values[f]) !== formatValue(f, entry.after_values[f]);
   });
+  const isDelete = entry.operation === 'DELETE';
+  const isInsert = entry.operation === 'INSERT';
 
   return (
     <View style={styles.reviewCard}>
@@ -719,6 +848,16 @@ function ReviewCard({ entry }: { entry: P2PPreviewEntry }) {
             </Text>
           </View>
         )}
+        {isDelete && (
+          <Text style={styles.reviewDeleteHint}>
+            Will be removed from this device too if you accept.
+          </Text>
+        )}
+        {isInsert && (
+          <Text style={styles.reviewInsertHint}>
+            New on this device.
+          </Text>
+        )}
 
         {visible.length > 0 && (
           <View style={styles.diff}>
@@ -726,11 +865,66 @@ function ReviewCard({ entry }: { entry: P2PPreviewEntry }) {
               const before = entry.before_values?.[f];
               const after = entry.after_values?.[f];
               const isConflict = entry.conflict_fields.includes(f);
+
+              if (isConflict) {
+                const key = resolutionKey(entry.table_name, entry.row_id, f);
+                const chosen = key in resolutions ? resolutions[key] : before;
+                const mineSelected = isResolutionValueEqual(chosen, before);
+                const theirsSelected = isResolutionValueEqual(chosen, after);
+                return (
+                  <View key={f} style={styles.diffField}>
+                    <Text style={[styles.diffFieldLabel, { color: colors.warningText }]}>
+                      {prettyField(f)} ⚠︎
+                    </Text>
+                    <Pressable
+                      onPress={() => onPickResolution(key, before)}
+                      style={({ pressed }) => [
+                        styles.pickRow,
+                        styles.pickMine,
+                        mineSelected && styles.pickRowSelectedMine,
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Icon
+                        sf={mineSelected ? 'largecircle.fill.circle' : 'circle'}
+                        size={16}
+                        color={mineSelected ? colors.dangerText : colors.textSubtle}
+                      />
+                      <View style={styles.pickContent}>
+                        <Text style={styles.pickLabel}>MINE</Text>
+                        <Text style={styles.pickValue} numberOfLines={2}>
+                          {formatValue(f, before)}
+                        </Text>
+                      </View>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => onPickResolution(key, after)}
+                      style={({ pressed }) => [
+                        styles.pickRow,
+                        styles.pickTheirs,
+                        theirsSelected && styles.pickRowSelectedTheirs,
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      <Icon
+                        sf={theirsSelected ? 'largecircle.fill.circle' : 'circle'}
+                        size={16}
+                        color={theirsSelected ? colors.successText : colors.textSubtle}
+                      />
+                      <View style={styles.pickContent}>
+                        <Text style={styles.pickLabel}>THEIRS</Text>
+                        <Text style={styles.pickValue} numberOfLines={2}>
+                          {formatValue(f, after)}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </View>
+                );
+              }
+
               return (
                 <View key={f} style={styles.diffField}>
-                  <Text style={[styles.diffFieldLabel, isConflict && { color: colors.warningText }]}>
-                    {prettyField(f)} {isConflict ? '⚠︎' : ''}
-                  </Text>
+                  <Text style={styles.diffFieldLabel}>{prettyField(f)}</Text>
                   {entry.before_values && (
                     <View style={styles.diffMinus}>
                       <Text style={styles.diffMinusSign}>−</Text>
@@ -871,6 +1065,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.3,
   },
+  reviewDeleteHint: {
+    ...typography.footnote,
+    color: colors.warningText,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  reviewInsertHint: {
+    ...typography.footnote,
+    color: colors.successText,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
 
   diff: { marginTop: 10, gap: 8 },
   diffField: { gap: 3 },
@@ -917,6 +1123,38 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   diffPlusText: { ...typography.footnote, color: colors.successText, flex: 1, fontWeight: '500' },
+
+  pickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  pickMine: { backgroundColor: colors.dangerBg },
+  pickTheirs: { backgroundColor: colors.successBg },
+  pickRowSelectedMine: { borderColor: colors.dangerText },
+  pickRowSelectedTheirs: { borderColor: colors.successText },
+  pickContent: { flex: 1, gap: 2 },
+  pickLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  pickValue: { ...typography.footnote, color: colors.text, fontWeight: '500' },
+
+  conflictHint: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+    textAlign: 'center',
+  },
 
   actionBar: {
     flexDirection: 'row',

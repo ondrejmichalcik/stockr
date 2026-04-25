@@ -1,0 +1,10 @@
+# Cloudflare Pages custom headers.
+# https://developers.cloudflare.com/pages/configuration/headers/
+
+# Apple Universal Links validation file. Apple's validator strictly
+# requires Content-Type: application/json on the AASA file, regardless
+# of the file having no extension. Without this Cloudflare serves it
+# as application/octet-stream and Apple rejects the link.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+  Cache-Control: no-cache, no-store, must-revalidate

@@ -107,9 +107,17 @@ See [Printing QR labels](/docs/printing) for full printer setup.
 
 See [Sharing & P2P sync → Troubleshooting P2P](/docs/collaboration#troubleshooting-p2p). Common fixes:
 
-- Bluetooth on, not in Low Power Mode.
+- Bluetooth and WiFi radios on, neither device in Low Power Mode.
 - Both devices on the P2P Sync screen at the same time.
 - Force-close and reopen the app on both devices.
+
+### My peer accepted but the changes didn't apply
+
+Both devices need to tap **Accept** on their review screen for the sync to commit. If only one of you accepted, nothing applies on either side. Make sure both screens have shown a green "{peer} already accepted" indicator before you both tap Accept.
+
+### One of us tapped Reject by mistake
+
+Tap **Try again** on the rejection screen — this clears the state and goes back to "Connected". From there, either device can tap **Sync now** again to start a fresh exchange.
 
 ## Refunds and purchases
 

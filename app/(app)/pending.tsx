@@ -269,10 +269,15 @@ function PendingRow({
   const operationLabel = OPERATION_LABEL[entry.operation];
   const time = formatRelativeTime(entry.created_at);
   const isUpdate = entry.operation === 'UPDATE';
+  // Inventory lines are append-only audit data captured during a count
+  // session — undoing one would corrupt the count history without any
+  // matching effect on the user's current inventory.
+  const isInventoryLine = entry.table_name === 'inventory_lines';
   const canRevert =
-    entry.operation === 'INSERT' ||
-    entry.operation === 'DELETE' ||
-    (isUpdate && entry.before_values !== null);
+    !isInventoryLine &&
+    (entry.operation === 'INSERT' ||
+      entry.operation === 'DELETE' ||
+      (isUpdate && entry.before_values !== null));
   const canNavigate = entry.nav !== null && entry.operation !== 'INSERT' && entry.operation !== 'DELETE';
 
   const NameWrapper: any = canNavigate ? Pressable : View;

@@ -195,15 +195,22 @@ export default function RootLayout() {
     }
   }, [isAuthenticated, loading, segments]);
 
-  // --- Deep link handler: kalta://invite/TOKEN ---
+  // --- Deep link handler: invite URLs ---
+  // Accepts both the legacy custom-scheme form (kalta://invite/TOKEN) used
+  // by older shared links and the Universal Link form
+  // (https://kalta.app/invite/TOKEN) used by current builds. Universal Links
+  // open the app natively when installed (via the AASA file at
+  // kalta.app/.well-known/apple-app-site-association) and fall back to the
+  // App Store landing for users without the app.
   useEffect(() => {
     const handle = async (url: string | null, origin: string) => {
       if (!url) return;
       const parsed = Linking.parse(url);
       const hostname = parsed.hostname ?? '';
       const path = parsed.path ?? '';
-      // kalta://invite/TOKEN → hostname=invite, path=TOKEN
-      // kalta:///invite/TOKEN → hostname="", path=invite/TOKEN
+      // kalta://invite/TOKEN              → hostname=invite, path=TOKEN
+      // kalta:///invite/TOKEN             → hostname="",     path=invite/TOKEN
+      // https://kalta.app/invite/TOKEN    → hostname=kalta.app, path=invite/TOKEN
       let token: string | null = null;
       if (hostname === 'invite' && path) {
         token = path;

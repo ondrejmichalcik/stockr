@@ -22,6 +22,7 @@ import type {
 } from '@/src/types/database';
 
 import { hasInitialSync } from './sync';
+import { wasRecentLocalWrite } from './realtimeEcho';
 import {
   addItemLocal,
   addItemsBatchLocal,
@@ -365,6 +366,18 @@ export async function removeMember(warehouseId: string, userId: string): Promise
   if (error) throw error;
 }
 
+// Realtime payloads expose `.new` and `.old` row snapshots. After our
+// own optimistic write the server echoes the same row back; if our
+// recent-write tracker still has the id, we suppress the callback.
+function isOwnEcho(
+  table: string,
+  payload: { new?: Record<string, any>; old?: Record<string, any> },
+): boolean {
+  const id = payload?.new?.id ?? payload?.old?.id;
+  if (!id) return false;
+  return wasRecentLocalWrite(table, String(id));
+}
+
 /**
  * Realtime subscription on `warehouse_members` filtered by the current user.
  * Fires when the user is added to a new warehouse (accepted invitation),
@@ -382,7 +395,15 @@ export function subscribeMyWarehouses(userId: string, onChange: () => void): () 
         table: 'warehouse_members',
         filter: `user_id=eq.${userId}`,
       },
-      () => onChange(),
+      (payload) => {
+        // warehouse_members has a composite PK so the row id used by
+        // the echo tracker is the warehouse_id (mirrors how members
+        // changes flow through enqueueChange / sync).
+        const wid =
+          (payload.new as any)?.warehouse_id ?? (payload.old as any)?.warehouse_id ?? null;
+        if (wid && wasRecentLocalWrite('warehouse_members', wid)) return;
+        onChange();
+      },
     )
     .subscribe();
   return () => {
@@ -499,7 +520,10 @@ export function subscribeBoxes(warehouseId: string, onChange: () => void): () =>
         table: 'boxes',
         filter: `warehouse_id=eq.${warehouseId}`,
       },
-      () => onChange(),
+      (payload) => {
+        if (isOwnEcho('boxes', payload)) return;
+        onChange();
+      },
     )
     .subscribe();
   return () => {
@@ -891,7 +915,10 @@ export function subscribeItems(boxId: string, onChange: () => void): () => void 
         table: 'items',
         filter: `box_id=eq.${boxId}`,
       },
-      () => onChange(),
+      (payload) => {
+        if (isOwnEcho('items', payload)) return;
+        onChange();
+      },
     )
     .subscribe();
   return () => {
@@ -1167,8 +1194,13 @@ export async function getInventoryLines(sessionId: string): Promise<InventoryLin
 // INVITATIONS
 // ============================================================================
 
+// Universal Link form: opens Kalta natively when the receiver has the app
+// installed (via the AASA file at https://kalta.app/.well-known/apple-app-site-association)
+// and falls back to the App Store landing page if not. Far better UX than
+// the old `kalta://` custom scheme, which silently fails when the app
+// isn't installed.
 export function buildInviteLink(token: string): string {
-  return `kalta://invite/${token}`;
+  return `https://kalta.app/invite/${token}`;
 }
 
 // ============================================================================

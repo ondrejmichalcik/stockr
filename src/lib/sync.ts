@@ -10,6 +10,7 @@
 import { getDb, initLocalDb } from './localDb';
 import { supabase } from './supabase';
 import { prefetchImages } from './imageCache';
+import { markRecentLocalWrite } from './realtimeEcho';
 
 // ---- Sync status tracking --------------------------------------------------
 
@@ -241,6 +242,9 @@ export function enqueueChange(
       payload ? JSON.stringify(payload) : null,
     ],
   );
+  // Mark the row so the realtime subscription suppresses the server's
+  // echo of our own write — we already updated SQLite optimistically.
+  markRecentLocalWrite(tableName, rowId);
   scheduleAutoPush();
 }
 

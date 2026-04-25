@@ -9,10 +9,13 @@ import { cacheImageFromLocal, removeCachedImage } from './imageCache';
 
 const BUCKET = 'product-images';
 
-// Resize target: keeps UI thumbnails crisp on retina screens while holding
-// file sizes around 80–150 KB per image. Height scales proportionally.
-const RESIZE_WIDTH = 800;
-const JPEG_QUALITY = 0.7; // 0..1, ImageManipulator scale
+// Resize target: items in lists render at 28–36 px and item edit sheets
+// show photos at ~120 px. 480 px wide gives crisp 2× retina on all those
+// surfaces while landing around 30–60 KB per file — roughly 3× smaller
+// than the previous 800 px @ 70 % preset, which keeps Supabase Storage
+// budget viable up to a few hundred active users.
+const RESIZE_WIDTH = 480;
+const JPEG_QUALITY = 0.6; // 0..1, ImageManipulator scale
 
 /**
  * Resize + compress a local image URI, upload it to the `product-images`

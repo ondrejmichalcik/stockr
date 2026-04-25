@@ -612,7 +612,7 @@ Po zjištění že iOS system print dialog Bluetooth tiskárnu nevidí a Brother
 - ✅ `appVersionSource: "remote"` + `autoIncrement: true` — buildNumber server-side, žádné app.json modifikace
 - ✅ Env vars push do preview environment (Supabase URL + publishable key)
 - ✅ **Build 22** (2026-04-25) — fixes Bonjour services + KaltaMultipeer autolinking (modul nebyl součástí Pods kvůli iOS 16 platform requirement vs target 15.1)
-- 🚧 **Build 23 pending** — P2P merge + pending screen + before→after diff + sync engine improvements + resource icons + never-expires + P2P review-and-accept
+- 🚧 **Build 23 pending** — P2P merge + pending screen + before→after diff + sync engine improvements + resource icons + never-expires + P2P review-and-accept + **in-session conflict resolution picker** + **image compression (480px@60%)** + **Universal Links (kalta.app/invite/*)** + P2P delete propagation + peer's `_changed_fields` honored
 
 ### Assety
 - ✅ `assets/icon.png` — 1024×1024, sage green 3D wooden box s QR kódem (RGBA)
@@ -808,7 +808,10 @@ Týden zaměřený na **App Store launch readiness** a **major sync engine impro
 - **Native module konečně linkovaný** — chyběl `package.json` v module folderu + iOS platform target byl `16.0` (proti app target `15.1`); CocoaPods proto modul odmítal
 - **Per-field merge + conflict detection** — replaced row-level last-write-wins. Stejná logika jako cloud sync engine. `_changed_fields` z payloadu, `findDiffFields` + overlap, automerge or `_conflicts` insert
 - **Baseline-aware conflict detection** (oba sync engines, cloud i P2P) — eliminuje false-positive konflikty kdy lokální user edited a server nemá ještě my push (`server.updated_at == baseline.updated_at` → skip; jinak per-field comparison vs baseline values)
+- **Peer's `_changed_fields` honored** — bundle SELECT * propaguje peer's pending edit set. Pokud peer's value differs from my baseline ale peer field nemá v `_changed_fields` (tj. propagace shora, ne aktivní edit), neflagujeme konflikt — eliminuje další třídu false-positives kdy cloud už dorazil mou edit zpět k peerovi
+- **P2P delete propagation** — bundle teď exportuje i soft-deleted rows (s `_deleted_at`). Příjemce aplikuje tombstone (Case 1b v `mergeRowPerField`); local-delete vs peer-alive = local wins (Case 1c). Eliminuje "zombie" rows co by se vrátily přes P2P
 - **Two-phase commit P2P review** — exchange bundles → both peers preview proposed changes → both must independently Accept před actual apply. Reject from either cancels both. Disconnect during exchange = cancellation. `previewSyncBundle()` dry-run helper. Message envelope `{type: BUNDLE|ACCEPT|REJECT}` na MCSession channel.
+- **In-session conflict resolution picker** — pro každý field v `conflict_fields` se v review screenu místo diff bloků renderuje **MINE / THEIRS** picker (default = lokální hodnota). ACCEPT message nese `resolutions: P2PResolutions` map (`${table}:${rowId}:${field}` → chosen value). Při dorazení peer's ACCEPT se mapy porovnají; pokud souhlasí → `importSyncBundle(bundle, resolutions)` aplikuje agreed value a field se odstraní z `_changed_fields` (oba peers konvergují deterministicky), jinak `disagreed` phase s "Adjust picks" / "Cancel sync". Eliminuje nutnost po-sync trip do `/conflicts` pro běžný household use case.
 - **Restored `app/(app)/p2p-sync.tsx`** z placeholder stavu na funkční flow (Hermes HBC bug obejit dynamic import workaroundem)
 
 **Pending changes screen** (nový `app/(app)/pending.tsx`):
@@ -875,13 +878,23 @@ Týden zaměřený na **App Store launch readiness** a **major sync engine impro
 - Hit free tier limit (30 buildů/měsíc) po vícenásobných iteracích kolem rename + P2P fixes — upgrade na Production plan
 - `eas.json` přepnut zpět na `appVersionSource: "remote"` + `autoIncrement: true` (eliminuje app.json modifikace, server-side counter)
 - Env vars pushnuté do `preview` environment přes `eas env:push preview --path .env`
-- Build 22 v TestFlight stable; Build 23 (s P2P review + pending + diff + sync v2) pending
+- Build 22 v TestFlight stable; Build 23 (s P2P review + in-session picker + pending + diff + sync v2 + image compression + Universal Links) pending
+
+**Tech debt cleanup (na záver session):**
+- **Image compression aggressive** — `src/lib/storage.ts` resize 800px@70% → **480px@60%** (~3× menší soubory, ~30–50 KB per item místo 80–150 KB). Šetří Supabase Storage cap; kvalita stále dostatečná pro thumbnail i full-screen view na mobile.
+- **Universal Links** — `web/public/.well-known/apple-app-site-association` s Team ID `P59Z5SBM7N` + bundle ID + `applinks` components na `/invite/*`. Cloudflare Pages `_headers` zajišťuje `Content-Type: application/json` (Apple-required), `_redirects` rewrites `/invite/*` → `/invite` static fallback page. `app.json` `associatedDomains: ["applinks:kalta.app"]`. `buildInviteLink` teď generuje `https://kalta.app/invite/${token}` místo `kalta://` schemu — funguje i jako fallback link když user nemá appku, otevře landing page s "Coming to App Store".
+- **Dev-only email/password login odstraněn** — `app/(auth)/login.tsx` byl `__DEV__` wrapped fallback bypass přes `supabase.auth.signInWithPassword`. V prod se nerenderoval (`__DEV__===false`), ale před App Store cleanupem ven kompletně. Login screen teď jen Apple Sign In + Continue offline.
+- **Pending: revert disabled pro `inventory_lines`** — append-only audit data ze scan-and-count session; revert by audit corruptl. UI tlačítko skryté pro tento table.
+- **Realtime self-event echo suppression** — nový `src/lib/realtimeEcho.ts` (5s sliding window tracker `(table, rowId, ts)`, max 200 entries). `enqueueChange` označí každý write přes `markRecentLocalWrite`; `subscribeBoxes` / `subscribeItems` / `subscribeMyWarehouses` v `supabase.ts` pak přes `isOwnEcho(payload)` ignorují server echo vlastních zápisů — eliminuje redundantní `load()` + re-render po každé lokální mutaci. Cross-device updates (manželčiny edity) projdou normálně, protože tracker je per-process.
+- **Role-aware UI ověřeno** — destructive actions správně gated: `Delete warehouse` / member promote/demote/remove / Invite (settings.tsx, isOwner condition), `Delete box` (box action sheet, line 257). `Delete item` zůstává dostupný **všem členům** záměrně — household model (manželka maže snědené jídlo), RLS items_delete je `is_member()` ne `is_owner()`.
 
 **Klíčová rozhodnutí:**
 - **Tier 10 ($9.99)** místo dřívějšího plánu free/Tier 3. Důvod: Supabase hosting cost per active user. Tier 10 pokrývá ~2-3 roky hostingu z jednorázové platby.
 - **App Store cesta místo TestFlight-only** definitively confirmed (TestFlight expiruje buildy po 90 dnech, prepper use case potřebuje persistent install)
 - **Two-phase commit P2P** > immediate apply. User explicitně chtěl review-then-accept flow, ne fire-and-forget.
+- **In-session conflict picker default = MINE** — bezpečný default (přijetí beze změny zachová moje editace); pro shodu s peerem musí někdo aktivně flipnout na "Theirs". Vede k explicit user-driven konvergenci místo arbitrární resolution strategy. Symetrický algoritmus (oba peers porovnají stejným způsobem) zaručuje, že disagreement screen naběhne na obou stranách současně.
 - **Sentinel date pro never-expires** > schema column. Žádná migrace, sync engine neutrální, UI rozezná lokálně.
+- **Universal Links přes web doménu** > custom URL scheme. `kalta://invite/...` je fragile (collision risk, žádný browser fallback), `https://kalta.app/invite/...` má jak iOS native handover (AASA), tak graceful web fallback pokud appka chybí.
 - **Cloudflare Pages over GitHub Pages** kvůli kalta.app DNS already on CF (one-click custom domain).
 - **Lucide SVG icons na webu** místo SF Symbols (Apple licensing forbids SF Symbols mimo Apple platforms marketing).
 - **PNG kategorie ikony pro items** v listech vs SF Symbols pro chrome — odpovídá designu z assets/icons/ Sprintu 2.5.
@@ -889,7 +902,7 @@ Týden zaměřený na **App Store launch readiness** a **major sync engine impro
 **Otevřené drobnosti:**
 - `inventory_lines` revert v pending screen je no-op (append-only data, nedá se "undo")
 - Multiple stacked UPDATEs pro 1 row + revert nejstaršího UPDATE → newer entries' before-snapshots zůstávají, ale visual-only zmatení (data integrity OK)
-- Image storage cap per user — připraven concept (image compression 800px@70% → 400px@60% sníží 3×) ale nepotvrzeno/neimplementováno
+- ✅ ~~Image storage cap per user~~ — vyřešeno: kompresí 480px@60% (viz Tech debt cleanup výše)
 
 ### Session 2026-04-19 — P2P crash deep-dive, attention banner, Hermes bisect
 
