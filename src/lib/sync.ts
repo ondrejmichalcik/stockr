@@ -11,6 +11,7 @@ import { getDb, initLocalDb } from './localDb';
 import { supabase } from './supabase';
 import { prefetchImages } from './imageCache';
 import { markRecentLocalWrite } from './realtimeEcho';
+import { promoteCoupledConflicts } from './syncFieldGroups';
 
 // ---- Sync status tracking --------------------------------------------------
 
@@ -429,6 +430,21 @@ function buildAggregatedEntry(
         if (!(k in accumulated)) accumulated[k] = v;
       }
     }
+    // For items, fold in the unit when quantity is in the accumulated
+    // before snapshot so the pending screen can render "25 pcs". If
+    // unit wasn't in any queue entry, it means the user didn't touch
+    // unit — so the current row's unit is also the historical "before".
+    if (
+      tableName === 'items' &&
+      'quantity' in accumulated &&
+      !('unit' in accumulated)
+    ) {
+      const row = db.getFirstSync<{ unit: string | null }>(
+        'SELECT unit FROM items WHERE id = ?',
+        [rowId],
+      );
+      if (row) accumulated.unit = row.unit;
+    }
     if (Object.keys(accumulated).length > 0) {
       beforeValues = resolveBeforeDisplayValues(db, accumulated);
     }
@@ -517,15 +533,22 @@ function lookupFieldValues(
   if (!allowed) return null;
   const safeFields = fields.filter((f) => allowed.has(f));
   if (safeFields.length === 0) return null;
+  // For items, fold in the unit field whenever quantity is being shown
+  // so the pending screen can render "25 pcs" rather than a context-
+  // less "25". Doesn't broaden changed_fields, so no extra diff row.
+  const queryFields =
+    table === 'items' && safeFields.includes('quantity') && !safeFields.includes('unit')
+      ? [...safeFields, 'unit']
+      : safeFields;
 
   try {
     const row = db.getFirstSync<Record<string, any>>(
-      `SELECT ${safeFields.join(', ')} FROM ${table} WHERE id = ?`,
+      `SELECT ${queryFields.join(', ')} FROM ${table} WHERE id = ?`,
       [rowId],
     );
     if (!row) return null;
     const out: Record<string, any> = {};
-    for (const f of safeFields) {
+    for (const f of queryFields) {
       const v = row[f];
       if (f === 'opened' || f === 'damaged') out[f] = !!v;
       else out[f] = v ?? null;
@@ -1170,10 +1193,13 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
   // up here before we can pull data for that warehouse. We also pick up
   // role changes and removals.
   try {
-    const { data: myMemberships } = await supabase
+    const { data: myMemberships, error: memErr } = await supabase
       .from('warehouse_members')
       .select('*, warehouses(*)')
       .eq('user_id', userId);
+    if (memErr) {
+      console.warn('[sync] memberships pull failed:', memErr.message);
+    }
     if (myMemberships) {
       // Upsert warehouses referenced by memberships.
       for (const m of myMemberships as any[]) {
@@ -1265,14 +1291,19 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
     }
   } catch { /* non-fatal */ }
 
-  // Pull boxes
-  const lastBoxPull = db.getFirstSync<{ last_pulled_at: string | null }>(
-    'SELECT last_pulled_at FROM _sync_meta WHERE table_name = ?', ['boxes'],
-  )?.last_pulled_at;
-
-  let boxQuery = supabase.from('boxes').select('*').in('warehouse_id', warehouseIds);
-  if (lastBoxPull) boxQuery = boxQuery.gt('updated_at', lastBoxPull);
-  const { data: serverBoxes } = await boxQuery;
+  // Pull ALL boxes for the user's warehouses — no `updated_at` filter.
+  // Incremental pulls used to miss boxes that were created long ago
+  // but only just became accessible to this user (e.g., they were
+  // added to an existing warehouse): the boxes' updated_at predates
+  // this client's lastBoxPull, so the `gt(...)` filter excluded them.
+  // Volume is small at household scale, so full-pull is the safe call.
+  const { data: serverBoxes, error: boxErr } = await supabase
+    .from('boxes')
+    .select('*')
+    .in('warehouse_id', warehouseIds);
+  if (boxErr) {
+    console.warn('[sync] boxes pull failed:', boxErr.message);
+  }
 
   for (const sb of (serverBoxes ?? []) as any[]) {
     const local = db.getFirstSync<any>(
@@ -1338,24 +1369,57 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
     pulled++;
   }
 
-  // Pull items
-  const lastItemPull = db.getFirstSync<{ last_pulled_at: string | null }>(
-    'SELECT last_pulled_at FROM _sync_meta WHERE table_name = ?', ['items'],
-  )?.last_pulled_at;
+  // Detect server-side hard deletes: any local box with `_synced=1` that
+  // isn't in the server's full snapshot is a ghost (server deleted it
+  // but our local pull never knew). Skip `_synced=0` rows — those are
+  // the user's own pending creates that haven't reached server yet.
+  // Boxes-only — items below get the same treatment.
+  if (!boxErr && warehouseIds.length > 0) {
+    const serverBoxIds = new Set((serverBoxes ?? []).map((b: any) => b.id));
+    const localSynced = db.getAllSync<{ id: string }>(
+      `SELECT id FROM boxes
+       WHERE warehouse_id IN (${warehouseIds.map(() => '?').join(',')})
+         AND _synced = 1 AND _deleted_at IS NULL`,
+      warehouseIds,
+    );
+    for (const { id } of localSynced) {
+      if (serverBoxIds.has(id)) continue;
+      console.warn('[sync] cleaning ghost box', id.slice(0, 8));
+      // Cascade items in the ghost box, but only those that are
+      // already synced — keep `_synced=0` rows so the user doesn't
+      // silently lose pending creates (they'll fail to push and
+      // surface via the sync status bar instead).
+      db.runSync('DELETE FROM items WHERE box_id = ? AND _synced = 1', [id]);
+      db.runSync('DELETE FROM boxes WHERE id = ?', [id]);
+      pulled++;
+    }
+  }
 
-  const boxIds = db.getAllSync<{ id: string }>(
-    'SELECT id FROM boxes WHERE warehouse_id IN (' + warehouseIds.map(() => '?').join(',') + ') AND _deleted_at IS NULL',
-    warehouseIds,
-  ).map((b) => b.id);
-
-  if (boxIds.length > 0) {
-    let itemQuery = supabase.from('items').select('*').in('box_id', boxIds);
-    if (lastItemPull) itemQuery = itemQuery.gt('updated_at', lastItemPull);
-    const { data: serverItems } = await itemQuery;
+  // Pull ALL items for the user's warehouses via the boxes!inner join,
+  // not via local boxIds. Two reasons we did this rebuild:
+  //  1. Local boxIds list is built from SQLite — if the box wasn't yet
+  //     pulled into SQLite (e.g. brand-new sharing scenarios), items in
+  //     it would be silently skipped.
+  //  2. The lastItemPull `gt(...)` filter skipped items the user just
+  //     gained access to but whose updated_at predates the cursor —
+  //     same root cause as the boxes incremental bug above.
+  // The inner join also doubles as an RLS sanity check: we only get
+  // items whose box's warehouse the user is a member of.
+  {
+    const { data: serverItems, error: itemErr } = await supabase
+      .from('items')
+      .select('*, boxes!inner(warehouse_id)')
+      .in('boxes.warehouse_id', warehouseIds);
+    if (itemErr) {
+      console.warn('[sync] items pull failed:', itemErr.message);
+    }
 
     const itemMergeFields = ['name', 'quantity', 'unit', 'expiry_date', 'barcode', 'image_url', 'category', 'notes', 'opened', 'damaged', 'pack_count', 'last_verified', 'box_id'];
 
-    for (const si of (serverItems ?? []) as any[]) {
+    for (const row of (serverItems ?? []) as any[]) {
+      // Strip the joined `boxes` relation so it doesn't leak into the
+      // conflict snapshot or any per-field comparisons.
+      const { boxes: _, ...si } = row;
       const local = db.getFirstSync<any>(
         'SELECT * FROM items WHERE id = ?', [si.id],
       );
@@ -1377,8 +1441,17 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
           return !valuesEqual(f, baseline.values[f], si[f]);
         });
 
+        // Promote coupled-field conflicts (items: quantity + unit) so the
+        // /conflicts UI shows a single combined picker rather than two
+        // separately-resolvable rows that could leave 25 paired with kg.
+        const allDiffFieldsItem = itemMergeFields.filter(
+          (f) => findDiffFields(local, si, [f]).length > 0,
+        );
+        promoteCoupledConflicts('items', realConflicts, allDiffFieldsItem);
+
         const autoMergeFields = itemMergeFields.filter((f) => {
           if (localFields.includes(f)) return false;
+          if (realConflicts.includes(f)) return false; // promoted into conflict
           return findDiffFields(local, si, [f]).length > 0;
         });
 
@@ -1405,6 +1478,37 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
         [si.id, si.box_id, si.name, si.quantity, si.unit, si.expiry_date, si.barcode, si.image_url, si.category, si.notes, si.opened ? 1 : 0, si.damaged ? 1 : 0, si.pack_count, si.last_verified, si.added_by, si.created_at, si.updated_at, now],
       );
       pulled++;
+    }
+
+    // Same ghost cleanup for items: anything `_synced=1` locally that
+    // isn't in the server's full snapshot was deleted server-side and
+    // our local needs to follow. Skip `_synced=0` (pending push).
+    if (!itemErr) {
+      const serverItemIds = new Set((serverItems ?? []).map((row: any) => row.id));
+      // Scope the cleanup to items in boxes that belong to user's
+      // warehouses, so we don't accidentally touch rows from boxes the
+      // server returned no items for due to a transient permission glitch.
+      const localBoxes = db.getAllSync<{ id: string }>(
+        `SELECT id FROM boxes
+         WHERE warehouse_id IN (${warehouseIds.map(() => '?').join(',')})
+           AND _deleted_at IS NULL`,
+        warehouseIds,
+      );
+      if (localBoxes.length > 0) {
+        const boxIdParams = localBoxes.map(() => '?').join(',');
+        const localSyncedItems = db.getAllSync<{ id: string }>(
+          `SELECT id FROM items
+           WHERE box_id IN (${boxIdParams})
+             AND _synced = 1 AND _deleted_at IS NULL`,
+          localBoxes.map((b) => b.id),
+        );
+        for (const { id } of localSyncedItems) {
+          if (serverItemIds.has(id)) continue;
+          console.warn('[sync] cleaning ghost item', id.slice(0, 8));
+          db.runSync('DELETE FROM items WHERE id = ?', [id]);
+          pulled++;
+        }
+      }
     }
   }
 

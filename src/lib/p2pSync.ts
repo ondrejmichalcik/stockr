@@ -26,6 +26,7 @@
 // ============================================================================
 import { getDb } from './localDb';
 import { recalcBoxCacheLocal } from './localWrites';
+import { promoteCoupledConflicts } from './syncFieldGroups';
 
 interface SyncBundle {
   version: 1;
@@ -91,7 +92,10 @@ export function resolutionKey(table: string, rowId: string, field: string): stri
 export type P2PMessage =
   | { type: 'BUNDLE'; bundle: string; senderName?: string }
   | { type: 'ACCEPT'; resolutions?: P2PResolutions }
-  | { type: 'REJECT' };
+  | { type: 'REJECT' }
+  // Receipt confirmation. Peer echoes back as soon as it processes a
+  // BUNDLE/ACCEPT/REJECT so the sender can prove the message arrived.
+  | { type: 'ACK'; ackOf: 'BUNDLE' | 'ACCEPT' | 'REJECT' };
 
 export function encodeMessage(msg: P2PMessage): string {
   return JSON.stringify(msg);
@@ -231,6 +235,8 @@ export function previewSyncBundle(jsonString: string): P2PPreviewEntry[] {
         }
       }
 
+      promoteCoupledConflicts(table, conflictFields, diffFields);
+
       out.push(buildPreviewEntry(db, table, remote, local, diffFields, conflictFields, 'UPDATE'));
     }
   }
@@ -255,6 +261,19 @@ function buildPreviewEntry(
   const afterValues = changedFields
     ? Object.fromEntries(changedFields.map((f) => [f, normalizeValue(f, remote[f])]))
     : null;
+  // For items, always include `unit` in the values maps (even when unit
+  // itself didn't change) so the review screen can render the quantity
+  // with its unit context — picking "MINE 15" vs "THEIRS 3" alone is
+  // meaningless when one side is grams and the other is pieces.
+  // Doesn't affect `changed_fields`, so no extra diff row is rendered.
+  if (table === 'items') {
+    if (beforeValues && local && !('unit' in beforeValues)) {
+      beforeValues.unit = local.unit ?? null;
+    }
+    if (afterValues && !('unit' in afterValues)) {
+      afterValues.unit = remote.unit ?? null;
+    }
+  }
   const display = lookupPreviewDisplay(db, table, remote, local);
   return {
     table_name: table,
@@ -275,6 +294,7 @@ function normalizeValue(field: string, raw: any): any {
   if (BOOL_FIELDS.has(field)) return !!raw;
   return raw ?? null;
 }
+
 
 function valuesEqualPreview(field: string, a: any, b: any): boolean {
   if (BOOL_FIELDS.has(field)) return !!a === !!b;
@@ -574,8 +594,17 @@ function mergeRowPerField(
     return true;
   });
 
+  // Promote coupled-field conflicts (quantity + unit) so this side's
+  // realConflicts mirrors the peer's: the resolution map keys must match
+  // for the agreement check to pass.
+  const allDiffFields = mergeFields.filter(
+    (f) => findDiffFields(local, remote, [f]).length > 0,
+  );
+  promoteCoupledConflicts(table, realConflicts, allDiffFields);
+
   const autoMergeFields = mergeFields.filter((f) => {
     if (localChangedFields.includes(f)) return false;
+    if (realConflicts.includes(f)) return false; // promoted into conflict
     return findDiffFields(local, remote, [f]).length > 0;
   });
 

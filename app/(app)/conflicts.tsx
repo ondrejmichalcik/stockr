@@ -82,6 +82,23 @@ function formatValue(field: string, value: unknown): string {
   return String(value);
 }
 
+// Append the sibling unit to a quantity value so "25" reads as "25 pcs"
+// — picking 25 vs 9 is meaningless without it, especially when one side
+// is `pcs` and the other is `kg`.
+function formatValueWithContext(
+  field: string,
+  value: unknown,
+  sideRow: Record<string, any> | null | undefined,
+): string {
+  const base = formatValue(field, value);
+  if (base === '—') return base;
+  if (field === 'quantity' && sideRow) {
+    const unit = sideRow.unit;
+    if (unit) return `${base} ${unit}`;
+  }
+  return base;
+}
+
 export default function ConflictsScreen() {
   const router = useRouter();
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
@@ -242,56 +259,80 @@ function ConflictCard({
           </View>
 
           <View style={styles.diff}>
-            {conflict.conflicting_fields.map((field) => {
-              const choice = choices[field] ?? 'local';
-              const localVal = conflict.local_data[field];
-              const serverVal = conflict.server_data[field];
-              return (
-                <View key={field} style={styles.diffField}>
-                  <Text style={styles.diffFieldLabel}>{prettyField(field)}</Text>
-                  <Pressable
-                    onPress={() => onChoice(field, 'local')}
-                    style={[
-                      styles.diffMinus,
-                      choice === 'local' ? styles.diffSelected : styles.diffUnselected,
-                    ]}
-                  >
-                    <View style={styles.diffSidebar}>
-                      <Text style={styles.diffMinusSign}>−</Text>
-                      <Text style={[styles.diffSideLabel, { color: colors.dangerText }]}>
-                        Mine
-                      </Text>
-                    </View>
-                    <Text style={styles.diffMinusText} numberOfLines={2}>
-                      {formatValue(field, localVal)}
-                    </Text>
-                    {choice === 'local' && (
-                      <Icon sf="checkmark.circle.fill" size={16} color={colors.dangerText} />
-                    )}
-                  </Pressable>
-                  <Pressable
-                    onPress={() => onChoice(field, 'server')}
-                    style={[
-                      styles.diffPlus,
-                      choice === 'server' ? styles.diffSelected : styles.diffUnselected,
-                    ]}
-                  >
-                    <View style={styles.diffSidebar}>
-                      <Text style={styles.diffPlusSign}>+</Text>
-                      <Text style={[styles.diffSideLabel, { color: colors.successText }]}>
-                        Server
-                      </Text>
-                    </View>
-                    <Text style={styles.diffPlusText} numberOfLines={2}>
-                      {formatValue(field, serverVal)}
-                    </Text>
-                    {choice === 'server' && (
-                      <Icon sf="checkmark.circle.fill" size={16} color={colors.successText} />
-                    )}
-                  </Pressable>
-                </View>
+            {(() => {
+              // Coupled rendering: items where both quantity AND unit
+              // are conflicting collapse into a single quantity picker
+              // (its label already prints "{q} {u}" via formatValueWithContext).
+              // Picking quantity also sets unit to the same side so the
+              // resolved row ends up self-consistent (no "25 kg" mishaps).
+              const isCoupledItem =
+                conflict.table_name === 'items' &&
+                conflict.conflicting_fields.includes('quantity') &&
+                conflict.conflicting_fields.includes('unit');
+              const visibleFields = conflict.conflicting_fields.filter(
+                (f) => !(isCoupledItem && f === 'unit'),
               );
-            })}
+
+              return visibleFields.map((field) => {
+                const choice = choices[field] ?? 'local';
+                const localVal = conflict.local_data[field];
+                const serverVal = conflict.server_data[field];
+                const isCoupledQuantity = isCoupledItem && field === 'quantity';
+                const pickLocal = () => {
+                  onChoice(field, 'local');
+                  if (isCoupledQuantity) onChoice('unit', 'local');
+                };
+                const pickServer = () => {
+                  onChoice(field, 'server');
+                  if (isCoupledQuantity) onChoice('unit', 'server');
+                };
+                return (
+                  <View key={field} style={styles.diffField}>
+                    <Text style={styles.diffFieldLabel}>{prettyField(field)}</Text>
+                    <Pressable
+                      onPress={pickLocal}
+                      style={[
+                        styles.diffMinus,
+                        choice === 'local' ? styles.diffSelected : styles.diffUnselected,
+                      ]}
+                    >
+                      <View style={styles.diffSidebar}>
+                        <Text style={styles.diffMinusSign}>−</Text>
+                        <Text style={[styles.diffSideLabel, { color: colors.dangerText }]}>
+                          Mine
+                        </Text>
+                      </View>
+                      <Text style={styles.diffMinusText} numberOfLines={2}>
+                        {formatValueWithContext(field, localVal, conflict.local_data)}
+                      </Text>
+                      {choice === 'local' && (
+                        <Icon sf="checkmark.circle.fill" size={16} color={colors.dangerText} />
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={pickServer}
+                      style={[
+                        styles.diffPlus,
+                        choice === 'server' ? styles.diffSelected : styles.diffUnselected,
+                      ]}
+                    >
+                      <View style={styles.diffSidebar}>
+                        <Text style={styles.diffPlusSign}>+</Text>
+                        <Text style={[styles.diffSideLabel, { color: colors.successText }]}>
+                          Server
+                        </Text>
+                      </View>
+                      <Text style={styles.diffPlusText} numberOfLines={2}>
+                        {formatValueWithContext(field, serverVal, conflict.server_data)}
+                      </Text>
+                      {choice === 'server' && (
+                        <Icon sf="checkmark.circle.fill" size={16} color={colors.successText} />
+                      )}
+                    </Pressable>
+                  </View>
+                );
+              });
+            })()}
           </View>
 
           <Pressable

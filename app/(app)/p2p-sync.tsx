@@ -89,6 +89,24 @@ export default function P2PSyncScreen() {
   const [syncResult, setSyncResult] = useState<{ inserted: number; updated: number; conflicts: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [rejectedBy, setRejectedBy] = useState<'me' | 'peer' | null>(null);
+  // Soft error surfaced on the waiting_peer screen — distinct from the
+  // hard `phase = 'error'` because the connection is likely still alive
+  // and the user can simply retry the send.
+  const [sendError, setSendError] = useState<string | null>(null);
+  // Delivery status for the most recent outbound message. Updated as
+  // we send → wait for the peer's ACK → either confirm or time out.
+  // Visible to the user as a pill so they always know whether their
+  // last action actually made it across the wire.
+  const [delivery, setDelivery] = useState<{
+    state: 'idle' | 'sending' | 'delivered' | 'failed';
+    label: string;
+  }>({ state: 'idle', label: '' });
+  const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Connecting-phase watchdog. iOS sometimes silently stalls in the
+  // MCSession `.connecting` state without ever firing the .connected or
+  // .notConnected delegate. After ~15s we give up so the user can try
+  // again instead of seeing an indefinite spinner.
+  const connectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userIdRef = useRef<string | null>(null);
   const userNameRef = useRef<string | null>(null);
   // Refs let event listeners read the latest values without rebinding the
@@ -99,6 +117,10 @@ export default function P2PSyncScreen() {
   const peerBundleRef = useRef<string | null>(null);
   const myResolutionsRef = useRef<P2PResolutions>({});
   const peerResolutionsRef = useRef<P2PResolutions | null>(null);
+  // Whether we've already shipped our own BUNDLE in this exchange.
+  // Drives auto-response: if peer's BUNDLE arrives and we haven't sent
+  // ours, we ship one immediately so they're not stuck in exchanging.
+  const myBundleSentRef = useRef<boolean>(false);
 
   useEffect(() => { myDecisionRef.current = myDecision; }, [myDecision]);
   useEffect(() => { peerDecisionRef.current = peerDecision; }, [peerDecision]);
@@ -110,6 +132,60 @@ export default function P2PSyncScreen() {
     getActiveUser().then((u) => { userNameRef.current = u?.email ?? null; });
   }, []);
 
+  // Clear any pending timers on unmount so we don't leak them.
+  useEffect(() => {
+    return () => {
+      if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+      if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
+    };
+  }, []);
+
+  // Reset the delivery indicator after a delivered status so the pill
+  // doesn't linger on screen forever.
+  useEffect(() => {
+    if (delivery.state !== 'delivered') return;
+    const t = setTimeout(() => setDelivery({ state: 'idle', label: '' }), 2_000);
+    return () => clearTimeout(t);
+  }, [delivery]);
+
+  // Centralised send-with-ACK helper. Sets the delivery pill, ships the
+  // message, then schedules a timeout that flips the pill to "failed"
+  // if the peer doesn't echo back within 4s. The matching ACK handler
+  // (in `handleIncomingMessage`) clears the timer and sets "delivered".
+  const sendWithAck = useCallback(
+    async (msg: P2PMessage, label: string): Promise<boolean> => {
+      if (ackTimerRef.current) {
+        clearTimeout(ackTimerRef.current);
+        ackTimerRef.current = null;
+      }
+      setSendError(null);
+      setDelivery({ state: 'sending', label: `Sending ${label}…` });
+      const wire = encodeMessage(msg);
+      console.log('[p2p] →', msg.type, 'bytes=', wire.length);
+      try {
+        const mp = await resolveMultipeer();
+        await mp.sendData(wire);
+      } catch (e: any) {
+        const err = e?.message ?? 'Send failed';
+        console.warn('[p2p] send failed:', err);
+        setDelivery({ state: 'failed', label: `${label}: ${err}` });
+        setSendError(err);
+        return false;
+      }
+      ackTimerRef.current = setTimeout(() => {
+        // Peer never confirmed — likely silent MCSession drop.
+        console.warn('[p2p] ACK timeout for', msg.type);
+        setDelivery({
+          state: 'failed',
+          label: `${label} not delivered — try Resend`,
+        });
+        setSendError('Peer did not confirm receipt');
+      }, 4_000);
+      return true;
+    },
+    [],
+  );
+
   // Reset all sync-state when starting a fresh exchange.
   const resetExchangeState = useCallback(() => {
     setPeerBundle(null);
@@ -119,8 +195,10 @@ export default function P2PSyncScreen() {
     setPeerDecision('pending');
     setMyResolutions({});
     peerResolutionsRef.current = null;
+    myBundleSentRef.current = false;
     setSyncResult(null);
     setRejectedBy(null);
+    setSendError(null);
   }, []);
 
   const handleStart = useCallback(async () => {
@@ -191,13 +269,39 @@ export default function P2PSyncScreen() {
         mp.onConnecting((e) => {
           setPhase('connecting');
           setConnectedPeer(e.peerDisplayName);
+          // Arm the watchdog — if we're still connecting after the
+          // timeout, drop the attempt so the user can re-tap the peer.
+          if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
+          connectTimerRef.current = setTimeout(() => {
+            console.warn('[p2p] connect timed out, returning to searching');
+            resolveMultipeer().then((mp2) => mp2.stopSession()).catch(() => {});
+            // stopSession kills advertiser/browser; restart so the peer
+            // list repopulates and the user can try again immediately.
+            setTimeout(() => {
+              const u = userNameRef.current?.trim() || 'Kalta User';
+              const dn = u.length > 30 ? u.slice(0, 30) : u;
+              resolveMultipeer().then((mp2) => mp2.startSession(dn)).catch(() => {});
+            }, 500);
+            setPeers([]);
+            setConnectedPeer(null);
+            resetExchangeState();
+            setPhase('searching');
+          }, 15_000);
         }),
         mp.onConnected((e) => {
+          if (connectTimerRef.current) {
+            clearTimeout(connectTimerRef.current);
+            connectTimerRef.current = null;
+          }
           setPhase('connected');
           setConnectedPeer(e.peerDisplayName);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         }),
         mp.onDisconnected(() => {
+          if (connectTimerRef.current) {
+            clearTimeout(connectTimerRef.current);
+            connectTimerRef.current = null;
+          }
           // If we're mid-exchange and peer drops, treat as reject.
           if (phaseAllowsCancel()) {
             setRejectedBy('peer');
@@ -235,6 +339,35 @@ export default function P2PSyncScreen() {
 
   // Handle a P2P message that just arrived from the peer.
   const handleIncomingMessage = useCallback((msg: P2PMessage) => {
+    console.log(
+      '[p2p] ←',
+      msg.type,
+      msg.type === 'ACCEPT'
+        ? `(resolutions=${Object.keys(msg.resolutions ?? {}).length})`
+        : msg.type === 'ACK'
+        ? `(ackOf=${msg.ackOf})`
+        : '',
+    );
+
+    // ACKs only update the delivery pill — they're the receipt for one
+    // of our outbound messages, never a state change in the protocol.
+    if (msg.type === 'ACK') {
+      if (ackTimerRef.current) {
+        clearTimeout(ackTimerRef.current);
+        ackTimerRef.current = null;
+      }
+      setDelivery({ state: 'delivered', label: `${msg.ackOf} delivered` });
+      return;
+    }
+
+    // Echo back an ACK immediately so the sender knows we received it.
+    // Fire-and-forget — if our ACK is lost the sender will see the
+    // timeout and can resend; we don't want to gate state transitions
+    // on a successful ACK send.
+    resolveMultipeer()
+      .then((mp) => mp.sendData(encodeMessage({ type: 'ACK', ackOf: msg.type })))
+      .catch(() => {});
+
     if (msg.type === 'BUNDLE') {
       // Peer sent their bundle. Compute preview and move to review.
       // Pre-populate `myResolutions` with each conflict's local value so
@@ -255,6 +388,30 @@ export default function P2PSyncScreen() {
         setPreview(computed);
         setMyResolutions(defaults);
         setPhase('reviewing');
+
+        // Auto-respond with our own bundle if the peer initiated and
+        // we haven't sent ours yet. Without this the initiator stays
+        // parked on "exchanging…" forever because they're waiting for
+        // a bundle from us that we never send.
+        if (!myBundleSentRef.current && userIdRef.current) {
+          myBundleSentRef.current = true;
+          const myBundle = exportSyncBundle(userIdRef.current);
+          console.log('[p2p] auto-responding with my BUNDLE');
+          resolveMultipeer()
+            .then((mp) =>
+              mp.sendData(
+                encodeMessage({
+                  type: 'BUNDLE',
+                  bundle: myBundle,
+                  senderName: userNameRef.current ?? undefined,
+                }),
+              ),
+            )
+            .catch((e) => {
+              console.warn('[p2p] auto-bundle send failed:', e?.message);
+              setSendError(e?.message ?? 'Could not send my bundle to peer');
+            });
+        }
       } catch (err: any) {
         setErrorMsg(err?.message ?? 'Could not parse peer bundle');
         setPhase('error');
@@ -296,42 +453,44 @@ export default function P2PSyncScreen() {
     }
   }, []);
 
-  // User taps "Sync now" — we send our bundle. Either side can initiate.
+  // User taps "Sync now" — we send our bundle. Either side can initiate;
+  // the other side auto-responds when the BUNDLE arrives, so the user
+  // who didn't tap doesn't have to.
   const handleStartSync = useCallback(async () => {
     if (!userIdRef.current) return;
-    try {
-      resetExchangeState();
-      const bundle = exportSyncBundle(userIdRef.current);
-      const mp = await resolveMultipeer();
-      const message: P2PMessage = {
-        type: 'BUNDLE',
-        bundle,
-        senderName: userNameRef.current ?? undefined,
-      };
-      await mp.sendData(encodeMessage(message));
-      // If we already have peer's bundle (peer was first to tap), we can
-      // jump straight to reviewing. Otherwise wait for theirs.
-      if (peerBundleRef.current) {
-        setPhase('reviewing');
-      } else {
-        setPhase('exchanging');
-      }
-    } catch (e: any) {
-      setErrorMsg(e?.message ?? 'Send failed');
-      setPhase('error');
+    resetExchangeState();
+    const bundle = exportSyncBundle(userIdRef.current);
+    myBundleSentRef.current = true;
+    const ok = await sendWithAck(
+      { type: 'BUNDLE', bundle, senderName: userNameRef.current ?? undefined },
+      'data',
+    );
+    // Move to next phase regardless of ACK status — the delivery pill
+    // surfaces failure independently and we don't want to block on the
+    // ACK round-trip.
+    if (peerBundleRef.current) {
+      setPhase('reviewing');
+    } else {
+      setPhase('exchanging');
     }
-  }, [resetExchangeState]);
+    if (!ok) {
+      // delivery pill already shows failure
+      return;
+    }
+  }, [resetExchangeState, sendWithAck]);
 
   const handleAccept = useCallback(async () => {
     setMyDecision('accept');
     const resolutions = myResolutionsRef.current;
-    try {
-      const mp = await resolveMultipeer();
-      await mp.sendData(encodeMessage({ type: 'ACCEPT', resolutions }));
-    } catch {
-      /* peer may have disconnected; we'll detect via onDisconnected */
-    }
+    const ok = await sendWithAck({ type: 'ACCEPT', resolutions }, 'decision');
     Haptics.selectionAsync().catch(() => {});
+    if (!ok) {
+      // sendWithAck already surfaced the failure on the delivery pill
+      // and populated sendError. Park on waiting_peer so the user can
+      // hit Resend (or wait for the ACK timeout).
+      setPhase('waiting_peer');
+      return;
+    }
     if (peerDecisionRef.current === 'accept' && peerResolutionsRef.current !== null) {
       if (resolutionsAgree(resolutions, peerResolutionsRef.current)) {
         applyPeerBundle();
@@ -341,7 +500,14 @@ export default function P2PSyncScreen() {
     } else {
       setPhase('waiting_peer');
     }
-  }, [applyPeerBundle]);
+  }, [applyPeerBundle, sendWithAck]);
+
+  // Re-send my ACCEPT to the peer. Reachable from the waiting_peer
+  // screen when the user suspects the first send didn't make it.
+  const handleResendAccept = useCallback(async () => {
+    const resolutions = myResolutionsRef.current;
+    await sendWithAck({ type: 'ACCEPT', resolutions }, 'decision');
+  }, [sendWithAck]);
 
   // User picks "Mine" / "Theirs" for a single conflict field.
   const handlePickResolution = useCallback((key: string, value: unknown) => {
@@ -362,15 +528,10 @@ export default function P2PSyncScreen() {
   const handleReject = useCallback(async () => {
     setMyDecision('reject');
     setRejectedBy('me');
-    try {
-      const mp = await resolveMultipeer();
-      await mp.sendData(encodeMessage({ type: 'REJECT' }));
-    } catch {
-      /* ignore */
-    }
+    await sendWithAck({ type: 'REJECT' }, 'reject');
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     setPhase('rejected');
-  }, []);
+  }, [sendWithAck]);
 
   const handleRetry = useCallback(() => {
     resetExchangeState();
@@ -396,6 +557,13 @@ export default function P2PSyncScreen() {
 
   const peerLabel = peerSenderName ?? connectedPeer ?? 'peer';
 
+  // Show the persistent status strip whenever we're past the initial
+  // device picker — the user always wants to see if the connection is
+  // alive and whether their last message actually got through.
+  const showStatusStrip = ['connected', 'exchanging', 'reviewing', 'waiting_peer', 'disagreed'].includes(
+    phase,
+  );
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <View style={styles.topBar}>
@@ -409,6 +577,45 @@ export default function P2PSyncScreen() {
         <Text style={styles.topBarTitle}>P2P Sync</Text>
         <View style={styles.topBarBtn} />
       </View>
+
+      {showStatusStrip && (
+        <View style={styles.statusStrip}>
+          <View style={styles.statusItem}>
+            <View
+              style={[
+                styles.statusDot,
+                { backgroundColor: connectedPeer ? colors.success : colors.warningText },
+              ]}
+            />
+            <Text style={styles.statusText} numberOfLines={1}>
+              {connectedPeer ? `Connected · ${peerLabel}` : 'Disconnected'}
+            </Text>
+          </View>
+          {delivery.state !== 'idle' && (
+            <View
+              style={[
+                styles.deliveryPill,
+                delivery.state === 'sending' && styles.deliveryPillSending,
+                delivery.state === 'delivered' && styles.deliveryPillOk,
+                delivery.state === 'failed' && styles.deliveryPillFail,
+              ]}
+            >
+              {delivery.state === 'sending' && (
+                <ActivityIndicator size="small" color={colors.text} />
+              )}
+              {delivery.state === 'delivered' && (
+                <Icon sf="checkmark.circle.fill" size={12} color={colors.successText} />
+              )}
+              {delivery.state === 'failed' && (
+                <Icon sf="exclamationmark.circle.fill" size={12} color={colors.warningText} />
+              )}
+              <Text style={styles.deliveryText} numberOfLines={1}>
+                {delivery.label}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {phase === 'idle' && (
         <View style={styles.center}>
@@ -509,12 +716,26 @@ export default function P2PSyncScreen() {
 
       {phase === 'waiting_peer' && (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.headline}>Waiting for {peerLabel}…</Text>
-          <Text style={styles.description}>
-            You accepted. {peerLabel} still needs to confirm before changes apply on either
-            device.
+          {sendError ? (
+            <Icon sf="exclamationmark.triangle.fill" size={48} color={colors.warningText} />
+          ) : (
+            <ActivityIndicator size="large" color={colors.primary} />
+          )}
+          <Text style={styles.headline}>
+            {sendError ? 'Could not reach peer' : `Waiting for ${peerLabel}…`}
           </Text>
+          <Text style={styles.description}>
+            {sendError
+              ? `Send failed: ${sendError}. Tap below to try again.`
+              : `You accepted. ${peerLabel} still needs to confirm before changes apply on either device. If they say nothing changed on their side, tap Resend.`}
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.8 }]}
+            onPress={handleResendAccept}
+          >
+            <Icon sf="paperplane.fill" size={16} color={colors.textOnPrimary} />
+            <Text style={styles.primaryBtnText}>Resend my decision</Text>
+          </Pressable>
           <Pressable
             style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.6 }]}
             onPress={handleReject}
@@ -806,6 +1027,24 @@ function formatValue(field: string, value: unknown): string {
   return String(value);
 }
 
+// formatValue plus context from sibling fields on the same side. Today
+// only quantity carries this — its unit is meaningless on its own and
+// the user shouldn't have to mentally pair "MINE 15" with the separate
+// unit row to know it's "15 g". Same for the picker selection text.
+function formatValueWithContext(
+  field: string,
+  value: unknown,
+  sideValues: Record<string, any> | null | undefined,
+): string {
+  const base = formatValue(field, value);
+  if (base === '—') return base;
+  if (field === 'quantity' && sideValues) {
+    const unit = sideValues.unit;
+    if (unit) return `${base} ${unit}`;
+  }
+  return base;
+}
+
 function ReviewCard({
   entry,
   resolutions,
@@ -816,9 +1055,22 @@ function ReviewCard({
   onPickResolution: (key: string, value: unknown) => void;
 }) {
   const fields = entry.changed_fields ?? [];
-  const visible = fields.filter((f) => {
+  const valueChanged = (f: string) => {
     if (!entry.before_values || !entry.after_values) return true;
     return formatValue(f, entry.before_values[f]) !== formatValue(f, entry.after_values[f]);
+  };
+  // Coupled rendering: when both quantity AND unit are in conflict for
+  // an item, the quantity picker already prints "{q} {u}" via context, so
+  // the separate unit picker would just duplicate it. Hide unit's row;
+  // the quantity picker's onPress sets both resolutions atomically.
+  const isCoupledItem =
+    entry.table_name === 'items' &&
+    entry.conflict_fields.includes('quantity') &&
+    entry.conflict_fields.includes('unit');
+
+  const visible = fields.filter((f) => {
+    if (isCoupledItem && f === 'unit') return false;
+    return valueChanged(f);
   });
   const isDelete = entry.operation === 'DELETE';
   const isInsert = entry.operation === 'INSERT';
@@ -871,13 +1123,34 @@ function ReviewCard({
                 const chosen = key in resolutions ? resolutions[key] : before;
                 const mineSelected = isResolutionValueEqual(chosen, before);
                 const theirsSelected = isResolutionValueEqual(chosen, after);
+                // For the coupled quantity field, picking also sets the
+                // unit resolution to the same side so the two stay in
+                // lockstep — and our resolution map matches the peer's.
+                const pickMine = () => {
+                  onPickResolution(key, before);
+                  if (isCoupledItem && f === 'quantity') {
+                    onPickResolution(
+                      resolutionKey(entry.table_name, entry.row_id, 'unit'),
+                      entry.before_values?.unit ?? null,
+                    );
+                  }
+                };
+                const pickTheirs = () => {
+                  onPickResolution(key, after);
+                  if (isCoupledItem && f === 'quantity') {
+                    onPickResolution(
+                      resolutionKey(entry.table_name, entry.row_id, 'unit'),
+                      entry.after_values?.unit ?? null,
+                    );
+                  }
+                };
                 return (
                   <View key={f} style={styles.diffField}>
                     <Text style={[styles.diffFieldLabel, { color: colors.warningText }]}>
                       {prettyField(f)} ⚠︎
                     </Text>
                     <Pressable
-                      onPress={() => onPickResolution(key, before)}
+                      onPress={pickMine}
                       style={({ pressed }) => [
                         styles.pickRow,
                         styles.pickMine,
@@ -893,12 +1166,12 @@ function ReviewCard({
                       <View style={styles.pickContent}>
                         <Text style={styles.pickLabel}>MINE</Text>
                         <Text style={styles.pickValue} numberOfLines={2}>
-                          {formatValue(f, before)}
+                          {formatValueWithContext(f, before, entry.before_values)}
                         </Text>
                       </View>
                     </Pressable>
                     <Pressable
-                      onPress={() => onPickResolution(key, after)}
+                      onPress={pickTheirs}
                       style={({ pressed }) => [
                         styles.pickRow,
                         styles.pickTheirs,
@@ -914,7 +1187,7 @@ function ReviewCard({
                       <View style={styles.pickContent}>
                         <Text style={styles.pickLabel}>THEIRS</Text>
                         <Text style={styles.pickValue} numberOfLines={2}>
-                          {formatValue(f, after)}
+                          {formatValueWithContext(f, after, entry.after_values)}
                         </Text>
                       </View>
                     </Pressable>
@@ -929,14 +1202,14 @@ function ReviewCard({
                     <View style={styles.diffMinus}>
                       <Text style={styles.diffMinusSign}>−</Text>
                       <Text style={styles.diffMinusText} numberOfLines={2}>
-                        {formatValue(f, before)}
+                        {formatValueWithContext(f, before, entry.before_values)}
                       </Text>
                     </View>
                   )}
                   <View style={styles.diffPlus}>
                     <Text style={styles.diffPlusSign}>+</Text>
                     <Text style={styles.diffPlusText} numberOfLines={2}>
-                      {formatValue(f, after)}
+                      {formatValueWithContext(f, after, entry.after_values)}
                     </Text>
                   </View>
                 </View>
@@ -954,6 +1227,35 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.sm, paddingVertical: spacing.sm },
   topBarBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   topBarTitle: { ...typography.headline, color: colors.text, flex: 1, textAlign: 'center' },
+
+  // Persistent status strip below the top bar — always shows current
+  // connection state plus the most recent send delivery status.
+  statusStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs + 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  statusItem: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { ...typography.footnote, color: colors.textMuted, flexShrink: 1 },
+  deliveryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    maxWidth: '60%',
+  },
+  deliveryPillSending: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  deliveryPillOk: { backgroundColor: colors.successBg },
+  deliveryPillFail: { backgroundColor: colors.warningBg },
+  deliveryText: { ...typography.caption, color: colors.text, fontWeight: '600' },
 
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.lg, paddingBottom: 80 },
 

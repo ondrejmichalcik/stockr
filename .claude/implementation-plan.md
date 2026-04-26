@@ -612,7 +612,8 @@ Po zjištění že iOS system print dialog Bluetooth tiskárnu nevidí a Brother
 - ✅ `appVersionSource: "remote"` + `autoIncrement: true` — buildNumber server-side, žádné app.json modifikace
 - ✅ Env vars push do preview environment (Supabase URL + publishable key)
 - ✅ **Build 22** (2026-04-25) — fixes Bonjour services + KaltaMultipeer autolinking (modul nebyl součástí Pods kvůli iOS 16 platform requirement vs target 15.1)
-- 🚧 **Build 23 pending** — P2P merge + pending screen + before→after diff + sync engine improvements + resource icons + never-expires + P2P review-and-accept + **in-session conflict resolution picker** + **image compression (480px@60%)** + **Universal Links (kalta.app/invite/*)** + P2P delete propagation + peer's `_changed_fields` honored
+- ✅ **Build 23** (2026-04-26) — Sprint 5 polish (P2P review-and-accept + in-session picker + pending screen + diff + sync v2 + image compression 480px@60% + Universal Links + delete propagation + peer's `_changed_fields` honored)
+- 🚧 **Build 24 pending** — P2P transport reliability (encryption `.none`, peer dedupe, ACK protocol, delivery pill, auto-bundle response, connect watchdog) + sync v3 (full pull, ghost cleanup) + coupled-field conflicts + permission gate + UI fixes
 
 ### Assety
 - ✅ `assets/icon.png` — 1024×1024, sage green 3D wooden box s QR kódem (RGBA)
@@ -788,10 +789,57 @@ Po otevření nové session:
    - Vytvořit App record v ASC, vyplnit metadata podle `docs/app-store/listing.md`
    - Vyplnit App Privacy questionnaire podle `docs/app-store/app-privacy.md`
    - Enable Family Sharing flag (až bude dostupné)
-2. **Build 23 deploy** — `eas build --platform ios --profile preview` (P2P review flow + pending + diff + never-expires)
-3. **Test na 2 iPhonech** — P2P review-and-accept flow s manželkou, pending changes screen, conflicts UI, never-expires toggle
+2. **Build 24 deploy** — `eas build --platform ios --profile preview`. Native změny vyžadují rebuild (MCSession `encryptionPreference: .none` v `KaltaMultipeerModule.swift`, peer dedupe). Plus všechny JS fixes z 2026-04-26 session.
+3. **Test na 2 iPhonech** — P2P connect (mělo by jít na 1.–2. pokus, ne 6–10), ACK delivery pill, auto-bundle response, coupled quantity+unit picker, ghost cleanup po sync, "Add manually" bez camera permission.
 4. **Screenshots** — iPhone 16 Pro Max simulator, 6 screens podle `docs/app-store/screenshots.md`
 5. **Submit pro Apple review** — `eas submit --platform ios --latest`, paste review notes z `docs/app-store/review-notes.md`
+
+### Session 2026-04-26 — Build 23 field-test + Build 24 reliability pass
+
+První reálný multi-device test buildu 23 s manželkou odhalil tři kategorie problémů: **P2P transport flaky**, **sync má ghost rows**, **picker UX nesmyslný bez context**. Pasivní oprava 9 věcí napříč code path. Vše JS-only až na native MCSession a permission UI fix → potřeba native rebuild (Build 24).
+
+**P2P transport reliability:**
+- **MCSession encryption `.none`** (z `.required`) — single biggest reliability problem. Šifrovací handshake na `.required` často timeoutoval, manželka s Ondrejem zkoušeli connect 6–10× než to chytlo. Bezpečnost OK: oba peers trusted (stejný Bonjour service `kalta-sync`, signed app, bundle ID), Bluetooth/AWDL transient nearby link, household-scale data.
+- **Dedupe `discoveredPeers`** v `KaltaMultipeerModule.swift` podle `displayName` — iOS Bonjour občas re-discoveruje peer s **novým MCPeerID** po krátkém dropu, invite stale ID tiše selhával.
+- **JS connect watchdog 15s** — pokud MCSession zaseklo v `.connecting` bez delegate event, `stopSession()` + 500ms pauza + `startSession()` znovu, návrat do searching. Žádný indefinite spinner.
+- **ACK protocol** — `P2PMessage` rozšířen o `{ type: 'ACK'; ackOf: 'BUNDLE'|'ACCEPT'|'REJECT' }`. Příjemce každé non-ACK zprávy okamžitě echo-pošle ACK. Odesilatel ho čeká 4s; když ne, **delivery pill flipne na "failed"**.
+- **Persistent status strip** v top baru pro phases connected+ — zelený/oranžový dot (Connected · jméno / Disconnected) + delivery pill (`Sending decision…` → `decision delivered` ✓ / `not delivered — try Resend` ⚠).
+- **Auto-bundle response** — když peer's BUNDLE dorazí a `myBundleSentRef === false`, automaticky pošlu svůj BUNDLE zpátky. Předtím protokol vyžadoval, aby OBA peeři tapnuli "Sync now" — když to udělal jen jeden, druhý zůstal v `exchanging` napořád.
+- **Manual Resend tlačítko** na `waiting_peer` screenu — když uživatel suspectuje že ACK timeout, pošle ACCEPT znovu.
+- **Console.log diagnostika** — `[p2p] → ACCEPT bytes=156` / `[p2p] ← ACK (ackOf=ACCEPT)` pro debugging via Xcode Console.
+
+**Sync engine v3 (cloud + ghost cleanup):**
+- **Drop incremental `gt('updated_at')` filter** na boxes a items pull. Bug: když manželka přidá usera do **existujícího** skladu, jeho boxes/items mají `updated_at` starší než user's `lastBoxPull` → server query je vyfiltruje pryč → user nikdy nedostane data. Volume v household scale je malý, full pull je safe call.
+- **Items pull přes `boxes!inner(warehouse_id)` join**, ne přes lokální `boxIds`. Předtím: pokud box nebyl v lokální SQLite (kvůli filteru výše), items v něm byly silently skipped. Teď inner join garantuje fetch všech items v user's warehouses + RLS sanity check.
+- **Surface pull errors** v console.warn — předtím `const { data } = await supabase...` ignoroval `error`. Tichá selhání u memberships/boxes/items jsou now logged.
+- **Ghost row cleanup** — local `_synced=1` rows missing v server's full snapshot = **server hard-delete co lokálně nebyl propagován** (Supabase nemá soft-delete v schématu, takže pull nikdy nemazal). Detected case: manželka má lokální item, "synced" UI, ale server tam nic nemá. Po pullu se cleanup smaže (skip `_synced=0` aby se zachovaly pending creates).
+
+**Coupled-field conflicts (quantity + unit):**
+- **Bug:** Lenka editovala 25 pcs → 9 kg (oba fieldy). Ondřej editoval jen quantity. Ondrejův algoritmus označil jen `quantity` za conflict, `unit` za auto-merge. Lenčin oba za conflict. **Asymetrické pickery → různé resolution map keys → po Accept disagreement screen pokaždé.** Plus picker zobrazoval jen "MINE 25 / THEIRS 9" — bez unit kontextu nesmyslné rozhodnutí.
+- **Fix vrstva 1 — algorithm**: nový `src/lib/syncFieldGroups.ts` s `COUPLED_FIELDS = { items: [['quantity', 'unit']] }` a `promoteCoupledConflicts(table, conflictFields, diffFields)`. Když je quantity v conflict_fields a unit se mění, unit se promotuje (a naopak). Helper sdílen mezi `sync.ts` (cloud pull), `p2pSync.ts` (preview + apply path).
+- **Fix vrstva 2 — UI**: ReviewCard / ConflictCard / pending screen detekují coupled item a **skipnou separátní `unit` řádek**. Picker pro quantity používá `formatValueWithContext` → "MINE 25 pcs / THEIRS 9 kg". Tap MINE/THEIRS atomicky setuje **obě** resolutions (quantity i unit) tak, aby zůstaly v lockstepu.
+- Aplikováno v `app/(app)/conflicts.tsx` (cloud sync conflicts), `app/(app)/p2p-sync.tsx` (P2P review), `app/(app)/pending.tsx` (offline diff display).
+
+**Drobné fixes:**
+- **Permission gate v add-items.tsx** se vyhodnocoval bez ohledu na `mode`. Když user tapnul "Add manually", `setMode('form')` proběhl, ale další render dál vracel permission screen. Fix: `if (!permission.granted && mode === 'scan')`. "Add manually" teď funguje bez camera permission.
+- **Allow camera button** chybí `styles.btn` (padding/radius), jen `btnPrimary` (jen background). Vypadalo "zmrsene". Plus oba buttony se v `center` (`alignItems: 'center'`) smrskaly na šířku obsahu — různé. Fix: oba `[styles.btn, styles.btnX, styles.permBtn]` se `alignSelf: 'stretch', minWidth: 240`.
+- **Dev-only email/password login removed** z `app/(auth)/login.tsx` — `__DEV__` wrapped, prod stejně neviděl, ale cleanup před App Store submission.
+- **Pending revert disabled pro `inventory_lines`** — append-only audit data, revert by audit corruptl. UI tlačítko se schová pro tento table.
+- **Realtime self-event echo suppression** — nový `src/lib/realtimeEcho.ts` (5s sliding window, max 200 entries). `enqueueChange` označí každý write přes `markRecentLocalWrite`; `subscribeBoxes` / `subscribeItems` / `subscribeMyWarehouses` ignorují server echo vlastních zápisů přes `isOwnEcho(payload)`. Eliminuje redundantní `load()` po každé lokální mutaci. Cross-device updates projdou normálně (tracker per-process).
+
+**Klíčová rozhodnutí této session:**
+- **`encryption: .none` je správný trade-off** pro household P2P. Apple by ti řekl ať použiješ `.required`, ale skutečnost je že MCSession encryption handshake je notoricky nespolehlivý a dataset (rodinné sklady) není citlivý dataset který by zasluhoval enforced TLS přes ad-hoc Bluetooth.
+- **Coupled field promotion řeší symetrii** mezi peers — bez ní jsou resolution maps pokaždé různé a P2P review-and-accept skončí na disagreement screenu, i když uživatelé chtějí stejnou věc.
+- **Ghost cleanup používá `_synced=1` jako safety pojistku** — řádky pending push (`_synced=0`) zůstávají i kdyby na serveru nebyly. Plus pull error gating (`!boxErr` / `!itemErr`) — když query selže, neděláme tabula rasa nad prázdnou odpovědí.
+- **Full pull > incremental pull** v household scale. Bandwidth je zanedbatelný, jistota že dataset je up-to-date je daleko cennější než šetření pár KB každých 30s.
+- **ACK protocol je must-have** pro UX — bez něj user neví jestli to dorazilo, a "spinner forever" ničí důvěru ve feature. Protokol je teď self-diagnosing — buď vidíš "delivered ✓" nebo víš co opravit.
+
+**Otevřené drobnosti:**
+- **Ondrejova ghost-item zatím přežívá** — to byl item který chyběl i po reinstall. Server data confirmed neexistuje, item je čistě lokální fantom u Lenky. Ghost cleanup ho na příští sync vyčistí.
+- **Connection state badge nemá retry button** — když pill ukáže "not delivered", retry je jen z explicit "Resend my decision" buttonu na waiting_peer. Mohl by být dvouklikáč přímo z pill.
+- **Connect watchdog 15s je heuristický** — Apple nikde negarantuje upper bound, mohlo by být že legitní handshake na slabém signálu trvá déle. Dataset N=2 (já + manželka) není reprezentativní.
+
+---
 
 ### Session 2026-04-23 → 2026-04-25 — Sprint 5 launch prep + sync engine v2
 

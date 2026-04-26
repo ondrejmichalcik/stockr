@@ -57,7 +57,15 @@ public class KaltaMultipeerModule: Module {
       let peer = MCPeerID(displayName: safe)
       self.peerID = peer
 
-      let sess = MCSession(peer: peer, securityIdentity: nil, encryptionPreference: .required)
+      // `.none` rather than `.required`: the encryption handshake on
+      // `.required` is the single biggest reliability problem with
+      // MCSession on iOS — many users see 6–10 failed connect attempts
+      // before one sticks. Both peers here are trusted (same Bonjour
+      // service type, same signed app), traffic goes over Bluetooth /
+      // AWDL on a transient nearby link rather than the public WiFi
+      // segment, and our family-scale data is non-sensitive enough that
+      // unencrypted Bluetooth is fine for the use case.
+      let sess = MCSession(peer: peer, securityIdentity: nil, encryptionPreference: .none)
       let del = SessionDelegate(module: self)
       sess.delegate = del
       self.session = sess
@@ -217,6 +225,10 @@ private class SessionDelegate: NSObject, MCSessionDelegate, MCNearbyServiceAdver
   // -- MCNearbyServiceBrowserDelegate --
 
   func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
+    // Drop any prior entries with the same displayName — a peer can be
+    // re-discovered with a fresh MCPeerID after a transient drop, and
+    // inviting the stale one fails silently.
+    discoveredPeers.removeAll { $0.displayName == peerID.displayName }
     discoveredPeers.append(peerID)
     DispatchQueue.main.async {
       self.module?.sendEvent("onPeerFound", [

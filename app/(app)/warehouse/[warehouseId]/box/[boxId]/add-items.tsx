@@ -580,7 +580,10 @@ export default function AddItemsScreen() {
     );
   }
 
-  if (!permission.granted) {
+  // Only gate on camera permission while we're actually in the scanner.
+  // Once the user picks "Add manually" and we switch to form/queue mode,
+  // the camera is irrelevant — let the normal render path handle those.
+  if (!permission.granted && mode === 'scan') {
     return (
       <SafeAreaView style={styles.container} edges={['top']}>
         <View style={styles.center}>
@@ -589,10 +592,10 @@ export default function AddItemsScreen() {
           <Text style={styles.permText}>
             I need camera access to scan product barcodes.
           </Text>
-          <Pressable style={styles.btnPrimary} onPress={requestPermission}>
+          <Pressable style={[styles.btn, styles.btnPrimary, styles.permBtn]} onPress={requestPermission}>
             <Text style={styles.btnPrimaryText}>Allow camera</Text>
           </Pressable>
-          <Pressable style={[styles.btn, styles.btnSecondary]} onPress={handleManual}>
+          <Pressable style={[styles.btn, styles.btnSecondary, styles.permBtn]} onPress={handleManual}>
             <Text style={styles.btnSecondaryText}>Add manually</Text>
           </Pressable>
         </View>
@@ -1065,6 +1068,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.xl,
   },
+  // Stretch the permission CTA buttons to a sane width inside the
+  // centered column. The shared `btn` style is otherwise full-width
+  // when used in a flex parent, but `center` with alignItems:'center'
+  // shrinks children to content width — these need an explicit min.
+  permBtn: { alignSelf: 'stretch', minWidth: 240 },
   // Scanner
   cameraWrap: { flex: 1, backgroundColor: '#000', overflow: 'hidden' },
   scanOverlay: {

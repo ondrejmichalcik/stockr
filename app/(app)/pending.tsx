@@ -326,7 +326,15 @@ function PendingRow({
           // Drop no-op fields where the user "changed" something but the
           // value ended up identical (e.g. saving an unchanged edit sheet).
           // The queue still contains them but they're noise to render.
+          const isItem = entry.table_name === 'items';
+          const isCoupledItem =
+            isItem &&
+            entry.changed_fields.includes('quantity') &&
+            entry.changed_fields.includes('unit');
           const visible = entry.changed_fields.filter((f) => {
+            // The unit row would just duplicate the quantity row when
+            // both changed (quantity already prints "{q} {u}").
+            if (isCoupledItem && f === 'unit') return false;
             const before = entry.before_values?.[f];
             const after = entry.field_values?.[f];
             if (!entry.before_values || !(f in entry.before_values)) return true;
@@ -346,14 +354,14 @@ function PendingRow({
                       <View style={styles.diffMinus}>
                         <Text style={styles.diffMinusSign}>−</Text>
                         <Text style={styles.diffMinusText} numberOfLines={2}>
-                          {formatValue(f, before)}
+                          {formatValueWithContext(f, before, entry.before_values)}
                         </Text>
                       </View>
                     )}
                     <View style={styles.diffPlus}>
                       <Text style={styles.diffPlusSign}>+</Text>
                       <Text style={styles.diffPlusText} numberOfLines={2}>
-                        {formatValue(f, after)}
+                        {formatValueWithContext(f, after, entry.field_values)}
                       </Text>
                     </View>
                   </View>
@@ -392,8 +400,8 @@ function formatRevertMessage(entry: PendingEntry): string {
   // UPDATE
   if (entry.changed_fields && entry.changed_fields.length === 1) {
     const f = entry.changed_fields[0];
-    const before = formatValue(f, entry.before_values?.[f]);
-    const after = formatValue(f, entry.field_values?.[f]);
+    const before = formatValueWithContext(f, entry.before_values?.[f], entry.before_values);
+    const after = formatValueWithContext(f, entry.field_values?.[f], entry.field_values);
     return `Restore ${prettyField(f).toLowerCase()} of "${itemName}" from "${after}" back to "${before}"?`;
   }
   return `Restore ${entry.changed_fields?.length ?? 0} fields of "${itemName}" to their previous values?`;
@@ -438,6 +446,22 @@ function formatValue(field: string, value: unknown): string {
     return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, '');
   }
   return String(value);
+}
+
+// Quantity needs its unit to mean anything. Pull the sibling unit from
+// the same side's value map so "25" renders as "25 pcs".
+function formatValueWithContext(
+  field: string,
+  value: unknown,
+  sideValues: Record<string, any> | null | undefined,
+): string {
+  const base = formatValue(field, value);
+  if (base === '—') return base;
+  if (field === 'quantity' && sideValues) {
+    const unit = sideValues.unit;
+    if (unit) return `${base} ${unit}`;
+  }
+  return base;
 }
 
 function groupByTable(entries: PendingEntry[]): { table: string; entries: PendingEntry[] }[] {
