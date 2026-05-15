@@ -87,10 +87,18 @@ public class KaltaMultipeerModule: Module {
       guard let browser = self.browser, let session = self.session else {
         throw MultipeerError.notStarted
       }
-      guard let targetPeer = self.delegate?.discoveredPeers.first(where: { $0.displayName == peerDisplayName }) else {
+      // Take the LAST match by displayName — Bonjour rediscovery can
+      // leave older MCPeerIDs in the list for a beat, and inviting the
+      // stale one fails silently. The dedupe in `foundPeer` already
+      // prunes most of these, but `last` is a defensive belt-and-braces.
+      guard let targetPeer = self.delegate?.discoveredPeers.last(where: { $0.displayName == peerDisplayName }) else {
         throw MultipeerError.peerNotFound
       }
-      browser.invitePeer(targetPeer, to: session, withContext: nil, timeout: 30)
+      // Tighter invitation timeout (10s instead of 30s) — if the peer
+      // doesn't come through quickly, the JS-side watchdog will reset
+      // the session and let the user retry. 30s of indeterminate wait
+      // was a meaningful chunk of the "6–10 attempts" UX problem.
+      browser.invitePeer(targetPeer, to: session, withContext: nil, timeout: 10)
     }
 
     // Send a string (JSON sync bundle) to all connected peers.
@@ -130,6 +138,18 @@ public class KaltaMultipeerModule: Module {
     session = nil
     delegate = nil
     peerID = nil
+  }
+
+  // Recover from a wedged MCSession after a `.notConnected` event by
+  // building a brand-new session bound to the same delegate. Keeps
+  // advertiser/browser alive so peer discovery doesn't restart from
+  // scratch — only the connection-state machine resets.
+  fileprivate func refreshSessionAfterDisconnect() {
+    guard let peer = self.peerID, let del = self.delegate else { return }
+    self.session?.disconnect()
+    let fresh = MCSession(peer: peer, securityIdentity: nil, encryptionPreference: .none)
+    fresh.delegate = del
+    self.session = fresh
   }
 
   deinit {
@@ -181,6 +201,12 @@ private class SessionDelegate: NSObject, MCSessionDelegate, MCNearbyServiceAdver
           "peerDisplayName": peerID.displayName
         ])
       case .notConnected:
+        // After a failed connect, MCSession can wedge into a state
+        // where future invitePeer calls silently no-op. Replace the
+        // session with a fresh instance and rebind it to the existing
+        // advertiser so incoming invitations still work. Browser is
+        // unaffected — peer discovery keeps running.
+        self.module?.refreshSessionAfterDisconnect()
         self.module?.sendEvent("onDisconnected", [
           "peerDisplayName": peerID.displayName
         ])
@@ -239,10 +265,19 @@ private class SessionDelegate: NSObject, MCSessionDelegate, MCNearbyServiceAdver
 
   func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
     discoveredPeers.removeAll { $0 == peerID }
+    // Suppress the JS event when the same peer is still around under a
+    // different MCPeerID — Bonjour can drop+rediscover the same device
+    // with a fresh ID, and our `foundPeer` dedupe just replaced the
+    // entry. If we emitted onPeerLost here the JS-side peer list would
+    // briefly hide a peer that is in fact still invitable, leading to
+    // a flaky "tap a name that disappears under your finger" UX.
+    let stillReachable = discoveredPeers.contains { $0.displayName == peerID.displayName }
     DispatchQueue.main.async {
-      self.module?.sendEvent("onPeerLost", [
-        "peerDisplayName": peerID.displayName
-      ])
+      if !stillReachable {
+        self.module?.sendEvent("onPeerLost", [
+          "peerDisplayName": peerID.displayName
+        ])
+      }
     }
   }
 

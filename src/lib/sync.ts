@@ -958,18 +958,46 @@ export interface SyncConflict {
 }
 
 /**
- * Get all unresolved conflicts.
+ * Get all unresolved conflicts. Filters out fields that no longer
+ * actually disagree (local value == server value) — those can be
+ * leftovers from earlier false-positive detection or from a separate
+ * resolve. Conflicts with no remaining real-disagreement fields are
+ * auto-resolved on read so they don't sit in the UI as ghosts.
  */
 export function getConflicts(): SyncConflict[] {
   const db = getDb();
-  return db.getAllSync<any>(
+  const rows = db.getAllSync<any>(
     'SELECT * FROM _conflicts WHERE resolved_at IS NULL ORDER BY created_at DESC',
-  ).map((r: any) => ({
-    ...r,
-    local_data: JSON.parse(r.local_data),
-    server_data: JSON.parse(r.server_data),
-    conflicting_fields: JSON.parse(r.conflicting_fields),
-  }));
+  );
+  const out: SyncConflict[] = [];
+  const now = new Date().toISOString();
+  for (const r of rows) {
+    const local = JSON.parse(r.local_data);
+    const server = JSON.parse(r.server_data);
+    const declared: string[] = JSON.parse(r.conflicting_fields);
+    const stillConflicting = declared.filter(
+      (f) => !valuesEqual(f, local[f], server[f]),
+    );
+    if (stillConflicting.length === 0) {
+      // No disagreement remains — auto-resolve the row so it doesn't
+      // linger as a phantom "conflict" in the UI.
+      db.runSync(
+        'UPDATE _conflicts SET resolved_at = ? WHERE id = ?',
+        [now, r.id],
+      );
+      continue;
+    }
+    out.push({
+      id: r.id,
+      table_name: r.table_name,
+      row_id: r.row_id,
+      local_data: local,
+      server_data: server,
+      conflicting_fields: stillConflicting,
+      created_at: r.created_at,
+    });
+  }
+  return out;
 }
 
 /**
@@ -1328,8 +1356,11 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
       }
 
       // For each locally-changed field, conflict only if server actually
-      // changed it (i.e. server.value != baseline.value).
+      // changed it (i.e. server.value != baseline.value) AND we still
+      // disagree with the server. If our edit landed on the same value
+      // the server has, there's no disagreement to surface.
       const realConflicts = localFields.filter((f) => {
+        if (valuesEqual(f, local[f], sb[f])) return false;
         if (!baseline || !(f in baseline.values)) {
           // No baseline captured (legacy queue entries) — fall back to
           // value-only diff to stay safe.
@@ -1435,6 +1466,12 @@ export async function pullSync(userId: string): Promise<{ pulled: number; confli
         }
 
         const realConflicts = localFields.filter((f) => {
+          // Local already matches server — both sides ended up at the
+          // same value (e.g. user typed the same number locally that
+          // someone else pushed). The algorithm would otherwise flag
+          // this as a conflict because the baseline differs from the
+          // server, but there's nothing to disagree about.
+          if (valuesEqual(f, local[f], si[f])) return false;
           if (!baseline || !(f in baseline.values)) {
             return findDiffFields(local, si, [f]).length > 0;
           }

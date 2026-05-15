@@ -70,6 +70,16 @@ const MERGE_FIELDS: Record<string, string[]> = {
 // both sides before comparison to avoid spurious "string '1' != true" diffs.
 const BOOL_FIELDS = new Set(['opened', 'damaged']);
 
+// Only these tables carry the `_changed_fields` column in localDb. The
+// other sync-tracked tables (custom_products, inventory_sessions, etc.)
+// have no per-field history because they're either append-only or have
+// no conflict-resolvable shape. SQL touching the column on those tables
+// throws "no such column".
+const TABLES_WITH_CHANGED_FIELDS = new Set(['warehouses', 'boxes', 'items']);
+// Same story for `_local_updated_at` — only conflict-trackable tables
+// carry it. inventory_lines is append-only and lacks even `_deleted_at`.
+const TABLES_WITH_LOCAL_UPDATED = new Set(['warehouses', 'boxes', 'items']);
+
 // ----------------------------------------------------------------------------
 // Message envelope — wraps the raw bundle so we can multiplex other
 // signalling messages (ACCEPT / REJECT) on the same MCSession channel.
@@ -227,6 +237,10 @@ export function previewSyncBundle(jsonString: string): P2PPreviewEntry[] {
       if (local._synced === 0) {
         for (const f of localChanged) {
           if (!diffFields.includes(f)) continue;
+          // Local already matches remote — no disagreement, skip.
+          // Otherwise we'd surface a conflict for a field where both
+          // peers independently arrived at the same value.
+          if (valuesEqualPreview(f, local[f], remote[f])) continue;
           if (!baseline || !(f in baseline.values)) {
             conflictFields.push(f);
           } else if (!valuesEqualPreview(f, baseline.values[f], remote[f])) {
@@ -515,8 +529,11 @@ function mergeRowPerField(
       stats.skipped++;
       return;
     }
+    const localUpd = TABLES_WITH_LOCAL_UPDATED.has(table)
+      ? ', _local_updated_at = NULL'
+      : '';
     db.runSync(
-      `UPDATE ${table} SET _deleted_at = ?, _synced = 1, _local_updated_at = NULL WHERE id = ?`,
+      `UPDATE ${table} SET _deleted_at = ?, _synced = 1${localUpd} WHERE id = ?`,
       [remote._deleted_at, remote.id],
     );
     stats.updated++;
@@ -575,6 +592,9 @@ function mergeRowPerField(
   }
 
   const realConflicts = localChangedFields.filter((f) => {
+    // Local matches remote — both peers ended at the same value, so
+    // there's no disagreement even if the baseline differs.
+    if (valuesEqual(f, local[f], remote[f])) return false;
     if (!baseline || !(f in baseline.values)) {
       // No baseline captured (legacy entry) — fall back to value-only diff.
       return findDiffFields(local, remote, [f]).length > 0;
@@ -685,6 +705,7 @@ function removeFromChangedFields(
   rowId: string,
   field: string,
 ): void {
+  if (!TABLES_WITH_CHANGED_FIELDS.has(table)) return;
   const row = db.getFirstSync(
     `SELECT _changed_fields FROM ${table} WHERE id = ?`,
     [rowId],
@@ -781,8 +802,14 @@ function replaceRow(db: any, table: string, row: any): void {
   });
   values.push(row.id);
 
+  // Only clear `_changed_fields` on tables that actually carry the
+  // column — other sync-tracked tables (custom_products etc.) don't
+  // have it and the SQL would error out with "no such column".
+  const trailingSet = TABLES_WITH_CHANGED_FIELDS.has(table)
+    ? ', _synced = 1, _changed_fields = NULL'
+    : ', _synced = 1';
   db.runSync(
-    `UPDATE ${table} SET ${updates}, _synced = 1, _changed_fields = NULL WHERE id = ?`,
+    `UPDATE ${table} SET ${updates}${trailingSet} WHERE id = ?`,
     values,
   );
 }
